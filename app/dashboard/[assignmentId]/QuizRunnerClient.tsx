@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { submitAssignmentAction } from "@/lib/actions";
+import Spinner from "@/components/Spinner";
 
 interface Question {
   id: string;
@@ -245,6 +246,7 @@ export default function QuizRunnerClient({
             disabled={submitting}
             className="flex-1 sm:flex-initial px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-500 hover:from-indigo-500 hover:to-cyan-400 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
           >
+            {submitting && <Spinner className="w-4 h-4" />}
             {submitting ? "กำลังส่งและประมวลผลคะแนน..." : "ยืนยันส่งคำตอบ 🚀"}
           </button>
         </div>

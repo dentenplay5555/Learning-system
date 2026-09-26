@@ -3,42 +3,6 @@ import Link from "next/link";
 import { getSessionUser, adminDb, isFirebaseAdminConfigured } from "@/lib/firebase-admin";
 import { redirect } from "next/navigation";
 
-const MOCK_TEACHER_ASSIGNMENTS = [
-  {
-    id: "math-01",
-    title: "แบบทดสอบเรื่องเซตและความน่าจะเป็น (ชุดที่ 1)",
-    classId: "ห้อง ม.4/1",
-    submissionsCount: 38,
-    totalStudents: 40,
-    avgScore: 26.5,
-    maxScore: 30,
-    dueAt: "2026-10-01",
-    status: "active",
-  },
-  {
-    id: "sci-02",
-    title: "แบบฝึกหัดเคมี: ตารางธาตุและพันธะเคมี",
-    classId: "ห้อง ม.4/1",
-    submissionsCount: 22,
-    totalStudents: 40,
-    avgScore: 24.0,
-    maxScore: 30,
-    dueAt: "2026-10-05",
-    status: "active",
-  },
-  {
-    id: "eng-03",
-    title: "English Grammar: Subject-Verb Agreement",
-    classId: "ห้อง ม.4/2",
-    submissionsCount: 40,
-    totalStudents: 40,
-    avgScore: 18.2,
-    maxScore: 20,
-    dueAt: "2026-09-20",
-    status: "closed",
-  },
-];
-
 export default async function TeacherDashboardPage() {
   const user = await getSessionUser();
 
@@ -46,31 +10,81 @@ export default async function TeacherDashboardPage() {
     redirect("/login");
   }
 
-  // ดึง assignments จาก Firestore
-  let assignments = MOCK_TEACHER_ASSIGNMENTS;
+  // ดึง assignments จาก Firestore พร้อมสถิติการส่งงานจริงจาก /submissions
+  // ไม่มี mock fallback อีกต่อไป — ถ้ายังไม่มีข้อมูลจริง ให้แสดง empty state แทน
+  let assignments: Array<{
+    id: string;
+    title: string;
+    classId: string;
+    submissionsCount: number;
+    totalStudents: number;
+    avgScore: number;
+    maxScore: number;
+    dueAt: string;
+    status: string;
+  }> = [];
   try {
     if (isFirebaseAdminConfigured) {
       const snap = await adminDb.collection("assignments").limit(20).get();
       if (!snap.empty) {
-        assignments = snap.docs.map((doc: QueryDocumentSnapshot) => {
-          const d = doc.data();
-          return {
-            id: doc.id,
-            title: d.title || "แบบฝึกหัด",
-            classId: d.classId || "ห้องเรียน",
-            submissionsCount: 15,
-            totalStudents: 40,
-            avgScore: 25.0,
-            maxScore: d.maxScore || 30,
-            dueAt: d.dueAt?.toDate ? d.dueAt.toDate().toISOString().split("T")[0] : "2026-10-10",
-            status: "active",
-          };
-        });
+        // จำนวนนักเรียนทั้งหมด: นับจาก /users ที่ role === "student"
+        // (หมายเหตุ: โค้ดปัจจุบันยังไม่มีการผูก classId เข้ากับนักเรียนจริง
+        // จึงใช้จำนวนนักเรียนทั้งหมดในระบบเป็นตัวเทียบแทนจำนวนต่อห้อง)
+        const studentsSnap = await adminDb.collection("users").where("role", "==", "student").get();
+        const totalStudents = studentsSnap.size || 1;
+
+        assignments = await Promise.all(
+          snap.docs.map(async (doc: QueryDocumentSnapshot) => {
+            const d = doc.data();
+
+            // Query จริงจาก /submissions ที่ assignmentId ตรงกับข้อสอบนี้
+            const subsSnap = await adminDb
+              .collection("submissions")
+              .where("assignmentId", "==", doc.id)
+              .get();
+
+            const scores = subsSnap.docs
+              .map((s) => s.data().score)
+              .filter((s): s is number => typeof s === "number");
+
+            const submissionsCount = subsSnap.size;
+            const avgScore =
+              scores.length > 0
+                ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
+                : 0;
+
+            return {
+              id: doc.id,
+              title: d.title || "แบบฝึกหัด",
+              classId: d.classId || "ห้องเรียน",
+              submissionsCount,
+              totalStudents,
+              avgScore,
+              maxScore: d.maxScore || 30,
+              dueAt: d.dueAt?.toDate ? d.dueAt.toDate().toISOString().split("T")[0] : "2026-10-10",
+              status: "active",
+            };
+          })
+        );
       }
     }
   } catch (err) {
     console.error("Fetch teacher assignments error:", err);
   }
+
+  // สรุปตัวเลขรวมจริงจาก assignments ที่ query ได้ (ใช้แทนตัวเลข hardcode ใน Metrics Row)
+  const totalSubmissions = assignments.reduce((acc, a) => acc + a.submissionsCount, 0);
+  const totalPossible = assignments.reduce((acc, a) => acc + a.totalStudents, 0) || 1;
+  const submissionRate = Math.round((totalSubmissions / totalPossible) * 1000) / 10;
+  const scoredAssignments = assignments.filter((a) => a.submissionsCount > 0);
+  const overallAvgPercent =
+    scoredAssignments.length > 0
+      ? Math.round(
+          (scoredAssignments.reduce((acc, a) => acc + a.avgScore / (a.maxScore || 1), 0) /
+            scoredAssignments.length) *
+            1000
+        ) / 10
+      : 0;
 
   return (
     <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -111,18 +125,20 @@ export default async function TeacherDashboardPage() {
         </div>
         <div className="glass-panel p-5 rounded-2xl space-y-1">
           <div className="text-xs text-slate-400 font-medium">นักเรียนส่งงานแล้ว</div>
-          <div className="text-2xl font-bold text-emerald-400">100 ครั้ง</div>
+          <div className="text-2xl font-bold text-emerald-400">{totalSubmissions} ครั้ง</div>
           <div className="text-[11px] text-emerald-300">ตรวจอัตโนมัติ 100%</div>
         </div>
         <div className="glass-panel p-5 rounded-2xl space-y-1">
           <div className="text-xs text-slate-400 font-medium">อัตราการส่งงาน</div>
-          <div className="text-2xl font-bold text-indigo-400">83.3%</div>
-          <div className="text-[11px] text-indigo-300">สูงกว่าค่าเฉลี่ยสัปดาห์ก่อน</div>
+          <div className="text-2xl font-bold text-indigo-400">{submissionRate}%</div>
+          <div className="text-[11px] text-indigo-300">คำนวณจากข้อมูลจริงใน /submissions</div>
         </div>
         <div className="glass-panel p-5 rounded-2xl space-y-1">
           <div className="text-xs text-slate-400 font-medium">คะแนนเฉลี่ยรวม</div>
-          <div className="text-2xl font-bold text-amber-400">88.3%</div>
-          <div className="text-[11px] text-amber-300">ระดับดีเยี่ยม</div>
+          <div className="text-2xl font-bold text-amber-400">{overallAvgPercent}%</div>
+          <div className="text-[11px] text-amber-300">
+            {scoredAssignments.length > 0 ? "จากงานที่มีคนส่งแล้ว" : "ยังไม่มีการส่งงาน"}
+          </div>
         </div>
       </div>
 
@@ -147,6 +163,13 @@ export default async function TeacherDashboardPage() {
         </div>
 
         {/* Table / Cards */}
+        {assignments.length === 0 ? (
+          <div className="text-center py-14 space-y-2">
+            <div className="text-3xl">📋</div>
+            <p className="text-sm text-slate-300 font-semibold">ยังไม่มีแบบฝึกหัดที่สร้างไว้</p>
+            <p className="text-xs text-slate-500">กด &quot;+ สร้างแบบฝึกหัดใหม่&quot; ด้านบนเพื่อเริ่มต้น</p>
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm">
             <thead>
@@ -204,6 +227,7 @@ export default async function TeacherDashboardPage() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
     </div>
   );

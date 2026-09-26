@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createAssignmentAction } from "@/lib/actions";
+import Spinner from "@/components/Spinner";
 
 interface QuestionInput {
   id: string;
@@ -324,6 +325,7 @@ export default function NewAssignmentPage() {
             disabled={loading}
             className="px-8 py-3 rounded-xl bg-gradient-to-r from-cyan-600 via-cyan-500 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs shadow-xl shadow-cyan-600/30 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
           >
+            {loading && <Spinner className="w-4 h-4" />}
             {loading ? "กำลังบันทึกและแยกเฉลย..." : "บันทึกและเผยแพร่แบบฝึกหัด 🚀"}
           </button>
         </div>

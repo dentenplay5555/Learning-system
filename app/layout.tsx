@@ -3,6 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 import { getSessionUser } from "@/lib/firebase-admin";
 import { logoutAction } from "@/lib/actions";
+import PageTransition from "@/components/PageTransition";
 
 export const metadata: Metadata = {
   title: "Practice Hub — ระบบจัดการแบบฝึกหัดและติดตามผลการเรียน",
@@ -90,7 +91,9 @@ export default async function RootLayout({
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 relative z-10 flex flex-col">{children}</main>
+        <main className="flex-1 relative z-10 flex flex-col">
+          <PageTransition>{children}</PageTransition>
+        </main>
 
         {/* Global Footer */}
         <footer className="relative z-10 border-t border-slate-800/80 bg-slate-950/80 py-8 text-center text-xs text-slate-500">

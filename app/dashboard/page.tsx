@@ -3,41 +3,6 @@ import Link from "next/link";
 import { getSessionUser, adminDb, isFirebaseAdminConfigured } from "@/lib/firebase-admin";
 import { redirect } from "next/navigation";
 
-// Mock assignments สำหรับเริ่มต้นใช้งานเมื่อยังไม่มีข้อมูลใน DB
-const MOCK_ASSIGNMENTS = [
-  {
-    id: "math-01",
-    title: "แบบทดสอบเรื่องเซตและความน่าจะเป็น (ชุดที่ 1)",
-    description: "คณิตศาสตร์ ม.4 — ทำความเข้าใจนิยามเซต และการดำเนินการ ยูเนียน อินเตอร์เซกชัน",
-    classId: "ห้อง ม.4/1",
-    questionCount: 3,
-    maxScore: 30,
-    dueAt: "2026-10-01",
-    status: "pending",
-  },
-  {
-    id: "sci-02",
-    title: "แบบฝึกหัดเคมี: ตารางธาตุและพันธะเคมี",
-    description: "วิทยาศาสตร์พื้นฐาน — สมบัติของธาตุตามตารางธาตุและประเภทของพันธะ",
-    classId: "ห้อง ม.4/1",
-    questionCount: 3,
-    maxScore: 30,
-    dueAt: "2026-10-05",
-    status: "pending",
-  },
-  {
-    id: "eng-03",
-    title: "English Grammar: Subject-Verb Agreement",
-    description: "ภาษาอังกฤษ — กฎไวยากรณ์พื้นฐานและการใช้ Tenses ในประโยคทั่วไป",
-    classId: "ห้อง ม.4/1",
-    questionCount: 2,
-    maxScore: 20,
-    dueAt: "2026-09-20",
-    status: "graded",
-    score: 18,
-  },
-];
-
 export default async function StudentDashboardPage() {
   const user = await getSessionUser();
 
@@ -46,14 +11,41 @@ export default async function StudentDashboardPage() {
     redirect("/login");
   }
 
-  // ดึง assignments จริงจาก Firestore
-  let assignments = MOCK_ASSIGNMENTS;
+  // ดึง assignments จริงจาก Firestore พร้อม sync สถานะกับ submissions ของนักเรียนคนนี้
+  // ไม่มี mock fallback อีกต่อไป — ถ้ายังไม่มีข้อมูลจริง ให้แสดง empty state แทน
+  // (เดิมมี MOCK_ASSIGNMENTS ที่ id ตายตัวชนกับ MOCK_QUESTIONS ทำให้ submit จริงไม่ได้)
+  let assignments: Array<{
+    id: string;
+    title: string;
+    description: string;
+    classId: string;
+    questionCount: number;
+    maxScore: number;
+    dueAt: string;
+    status: string;
+    score?: number;
+  }> = [];
   try {
     if (isFirebaseAdminConfigured) {
       const snap = await adminDb.collection("assignments").limit(20).get();
       if (!snap.empty) {
+        // ดึง submission ทั้งหมดของนักเรียนคนนี้มาครั้งเดียว แล้ว map ด้วย assignmentId
+        // เพื่อรู้ว่าข้อไหนส่งไปแล้ว/ได้คะแนนเท่าไหร่ แทนที่จะ hardcode "pending" ทุกครั้ง
+        const subsSnap = await adminDb
+          .collection("submissions")
+          .where("studentId", "==", user.uid)
+          .get();
+        const submissionByAssignment = new Map<string, { score: number }>();
+        subsSnap.docs.forEach((s) => {
+          const d = s.data();
+          if (d.assignmentId) {
+            submissionByAssignment.set(d.assignmentId, { score: d.score ?? 0 });
+          }
+        });
+
         const firestoreList = snap.docs.map((doc: QueryDocumentSnapshot) => {
           const data = doc.data();
+          const submission = submissionByAssignment.get(doc.id);
           return {
             id: doc.id,
             title: data.title || "แบบฝึกหัด",
@@ -62,7 +54,8 @@ export default async function StudentDashboardPage() {
             questionCount: (data.questions || []).length,
             maxScore: data.maxScore || 10,
             dueAt: data.dueAt?.toDate ? data.dueAt.toDate().toISOString().split("T")[0] : "ไม่ระบุ",
-            status: "pending",
+            status: submission ? "graded" : "pending",
+            ...(submission ? { score: submission.score } : {}),
           };
         });
         if (firestoreList.length > 0) assignments = firestoreList;
@@ -71,6 +64,16 @@ export default async function StudentDashboardPage() {
   } catch (err) {
     console.error("Fetch assignments failed:", err);
   }
+
+  const pendingCount = assignments.filter((a) => a.status !== "graded").length;
+  const gradedList = assignments.filter((a) => a.status === "graded" && typeof a.score === "number");
+  const gradedCount = gradedList.length;
+  const avgPercent =
+    gradedCount > 0
+      ? Math.round(
+          (gradedList.reduce((acc, a) => acc + (a.score! / (a.maxScore || 1)) * 100, 0) / gradedCount)
+        )
+      : 0;
 
   return (
     <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -94,15 +97,15 @@ export default async function StudentDashboardPage() {
         {/* Quick Stats */}
         <div className="flex items-center gap-4">
           <div className="glass-panel px-5 py-3 rounded-2xl text-center">
-            <div className="text-2xl font-bold text-indigo-400">2</div>
+            <div className="text-2xl font-bold text-indigo-400">{pendingCount}</div>
             <div className="text-[11px] text-slate-400 font-medium">รอส่งคำตอบ</div>
           </div>
           <div className="glass-panel px-5 py-3 rounded-2xl text-center">
-            <div className="text-2xl font-bold text-emerald-400">1</div>
+            <div className="text-2xl font-bold text-emerald-400">{gradedCount}</div>
             <div className="text-[11px] text-slate-400 font-medium">ส่งแล้ว/ตรวจแล้ว</div>
           </div>
           <div className="glass-panel px-5 py-3 rounded-2xl text-center">
-            <div className="text-2xl font-bold text-amber-400">90%</div>
+            <div className="text-2xl font-bold text-amber-400">{avgPercent}%</div>
             <div className="text-[11px] text-slate-400 font-medium">คะแนนเฉลี่ย</div>
           </div>
         </div>
@@ -117,8 +120,15 @@ export default async function StudentDashboardPage() {
           <span className="text-xs text-slate-400">อัปเดตล่าสุดอัตโนมัติ</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {assignments.map((item) => (
+        {assignments.length === 0 ? (
+          <div className="glass-panel rounded-2xl p-10 text-center space-y-2">
+            <div className="text-3xl">📭</div>
+            <p className="text-sm text-slate-300 font-semibold">ยังไม่มีแบบฝึกหัดในตอนนี้</p>
+            <p className="text-xs text-slate-500">รอคุณครูสร้างแบบฝึกหัดใหม่ แล้วจะแสดงที่นี่โดยอัตโนมัติ</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {assignments.map((item) => (
             <div
               key={item.id}
               className="glass-panel glass-panel-hover rounded-2xl p-6 flex flex-col justify-between"
@@ -160,7 +170,8 @@ export default async function StudentDashboardPage() {
               </div>
             </div>
           ))}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
