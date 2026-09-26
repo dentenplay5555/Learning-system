@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isTeacherOf(classId) {
+      return get(/databases/$(database)/documents/classes/$(classId)).data.teacherId == request.auth.uid;
+    }
+
+    function isStudentInClass(classId) {
+      return request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.studentIds;
+    }
+
+    function isTeacher() {
+      return isSignedIn() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['teacher', 'admin'];
+    }
+
+    // --- Users ---
+    // ปิด create จาก Client 100% (สร้างผ่าน Server Admin SDK ตอนล็อกอินครั้งแรก พร้อม role "student" เสมอ)
+    // ป้องกัน Privacy Leak: ให้อ่านได้เฉพาะเจ้าของบัญชี หรือครู/แอดมิน เพื่อดูข้อมูลนักเรียน
+    // Client เจ้าของอัปเดตข้อมูลทั่วไปได้ แต่ห้ามแก้ role เด็ดขาด
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isTeacher();
+      allow create: if false;
+      allow update: if isOwner(uid) && request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    // --- Classes ---
+    // อ่านได้เฉพาะครูผู้สอนหรือนักเรียนในห้อง
+    // สร้างได้เฉพาะผู้ใช้ที่มี role "teacher" หรือ "admin" และต้องกำหนด teacherId เป็นของตัวเอง
+    // อัปเดตได้เฉพาะครูเจ้าของห้อง และห้ามเปลี่ยนความเป็นเจ้าของ (ห้ามแก้ teacherId)
+    match /classes/{classId} {
+      allow read: if isSignedIn() && (
+        resource.data.teacherId == request.auth.uid || 
+        request.auth.uid in resource.data.studentIds
+      );
+      allow create: if isTeacher() && request.resource.data.teacherId == request.auth.uid;
+      allow update: if isTeacherOf(classId) && 
+        request.resource.data.teacherId == resource.data.teacherId;
+      allow delete: if isTeacherOf(classId);
+    }
+
+    // --- Assignments ---
+    // อ่านได้ทั้งครูและนักเรียนในคลาสนั้น, สร้าง/แก้/ลบ ได้เฉพาะครูผู้สอนของคลาสนั้น
+    // ป้องกัน Cross-Tenant Data Injection: ห้ามย้ายห้อง (classId) และห้ามเปลี่ยนเจ้าของ (teacherId)
+    match /assignments/{id} {
+      allow read: if isSignedIn() && (
+        isTeacherOf(resource.data.classId) || 
+        isStudentInClass(resource.data.classId)
+      );
+      allow create: if isTeacher() && 
+        isTeacherOf(request.resource.data.classId) && 
+        request.resource.data.teacherId == request.auth.uid;
+      allow update: if isTeacherOf(resource.data.classId) &&
+        request.resource.data.classId == resource.data.classId &&
+        request.resource.data.teacherId == resource.data.teacherId;
+      allow delete: if isTeacherOf(resource.data.classId);
+    }
+
+    // --- AnswerKeys ---
+    // ปิดกั้นการเข้าถึงจาก Client 100% เข้าถึงผ่าน firebase-admin SDK บน Server เท่านั้น
+    match /answerKeys/{id} {
+      allow read, write: if false;
+    }
+
+    // --- Submissions ---
+    // ป้องกันการโกง: Client ห้ามเขียน/แก้คะแนนเองโดยตรง (write: if false)
+    // การส่งงานและตรวจคำตอบทำผ่าน Server Action (Admin SDK) เท่านั้น
+    match /submissions/{id} {
+      allow read: if isSignedIn() && (
+        resource.data.studentId == request.auth.uid ||
+        isTeacherOf(resource.data.classId)
+      );
+      allow write: if false;
+    }
+  }
+}

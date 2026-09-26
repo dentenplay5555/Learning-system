@@ -1,0 +1,167 @@
+import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
+import Link from "next/link";
+import { getSessionUser, adminDb, isFirebaseAdminConfigured } from "@/lib/firebase-admin";
+import { redirect } from "next/navigation";
+
+// Mock assignments สำหรับเริ่มต้นใช้งานเมื่อยังไม่มีข้อมูลใน DB
+const MOCK_ASSIGNMENTS = [
+  {
+    id: "math-01",
+    title: "แบบทดสอบเรื่องเซตและความน่าจะเป็น (ชุดที่ 1)",
+    description: "คณิตศาสตร์ ม.4 — ทำความเข้าใจนิยามเซต และการดำเนินการ ยูเนียน อินเตอร์เซกชัน",
+    classId: "ห้อง ม.4/1",
+    questionCount: 3,
+    maxScore: 30,
+    dueAt: "2026-10-01",
+    status: "pending",
+  },
+  {
+    id: "sci-02",
+    title: "แบบฝึกหัดเคมี: ตารางธาตุและพันธะเคมี",
+    description: "วิทยาศาสตร์พื้นฐาน — สมบัติของธาตุตามตารางธาตุและประเภทของพันธะ",
+    classId: "ห้อง ม.4/1",
+    questionCount: 3,
+    maxScore: 30,
+    dueAt: "2026-10-05",
+    status: "pending",
+  },
+  {
+    id: "eng-03",
+    title: "English Grammar: Subject-Verb Agreement",
+    description: "ภาษาอังกฤษ — กฎไวยากรณ์พื้นฐานและการใช้ Tenses ในประโยคทั่วไป",
+    classId: "ห้อง ม.4/1",
+    questionCount: 2,
+    maxScore: 20,
+    dueAt: "2026-09-20",
+    status: "graded",
+    score: 18,
+  },
+];
+
+export default async function StudentDashboardPage() {
+  const user = await getSessionUser();
+
+  // หากยังไม่เข้าสู่ระบบ ให้ redirect ไป /login
+  if (!user) {
+    redirect("/login");
+  }
+
+  // ดึง assignments จริงจาก Firestore
+  let assignments = MOCK_ASSIGNMENTS;
+  try {
+    if (isFirebaseAdminConfigured) {
+      const snap = await adminDb.collection("assignments").limit(20).get();
+      if (!snap.empty) {
+        const firestoreList = snap.docs.map((doc: QueryDocumentSnapshot) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            title: data.title || "แบบฝึกหัด",
+            description: data.description || "",
+            classId: data.classId || "ห้องเรียน",
+            questionCount: (data.questions || []).length,
+            maxScore: data.maxScore || 10,
+            dueAt: data.dueAt?.toDate ? data.dueAt.toDate().toISOString().split("T")[0] : "ไม่ระบุ",
+            status: "pending",
+          };
+        });
+        if (firestoreList.length > 0) assignments = firestoreList;
+      }
+    }
+  } catch (err) {
+    console.error("Fetch assignments failed:", err);
+  }
+
+  return (
+    <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
+      {/* Student Welcome Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-panel rounded-3xl p-6 sm:p-8">
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+              👨‍🎓 Student Dashboard
+            </span>
+            <span className="text-xs text-slate-400">ห้อง ม.4/1</span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white">
+            ยินดีต้อนรับ, {user.name || "นักเรียน"}
+          </h1>
+          <p className="text-sm text-slate-400">
+            ตรวจสอบรายการแบบฝึกหัดที่ได้รับมอบหมายและส่งคำตอบเพื่อดูผลคะแนน
+          </p>
+        </div>
+
+        {/* Quick Stats */}
+        <div className="flex items-center gap-4">
+          <div className="glass-panel px-5 py-3 rounded-2xl text-center">
+            <div className="text-2xl font-bold text-indigo-400">2</div>
+            <div className="text-[11px] text-slate-400 font-medium">รอส่งคำตอบ</div>
+          </div>
+          <div className="glass-panel px-5 py-3 rounded-2xl text-center">
+            <div className="text-2xl font-bold text-emerald-400">1</div>
+            <div className="text-[11px] text-slate-400 font-medium">ส่งแล้ว/ตรวจแล้ว</div>
+          </div>
+          <div className="glass-panel px-5 py-3 rounded-2xl text-center">
+            <div className="text-2xl font-bold text-amber-400">90%</div>
+            <div className="text-[11px] text-slate-400 font-medium">คะแนนเฉลี่ย</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Assignments Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <span>📝</span> รายการแบบฝึกหัดทั้งหมด
+          </h2>
+          <span className="text-xs text-slate-400">อัปเดตล่าสุดอัตโนมัติ</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {assignments.map((item) => (
+            <div
+              key={item.id}
+              className="glass-panel glass-panel-hover rounded-2xl p-6 flex flex-col justify-between"
+            >
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300">
+                    {item.classId}
+                  </span>
+                  {item.status === "graded" ? (
+                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
+                      ตรวจแล้ว ({item.score}/{item.maxScore})
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-amber-950/60 text-amber-400 border border-amber-800/40">
+                      ยังไม่ส่ง
+                    </span>
+                  )}
+                </div>
+
+                <h3 className="font-bold text-base text-slate-100 leading-snug line-clamp-2">
+                  {item.title}
+                </h3>
+                <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                  {item.description}
+                </p>
+              </div>
+
+              <div className="pt-6 mt-4 border-t border-slate-800/80 flex items-center justify-between">
+                <div className="text-[11px] text-slate-400">
+                  กำหนดส่ง: <span className="text-slate-200">{item.dueAt}</span>
+                </div>
+                <Link
+                  href={`/dashboard/${item.id}`}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+                >
+                  {item.status === "graded" ? "ดูผลคะแนน" : "เริ่มทำแบบฝึกหัด →"}
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
