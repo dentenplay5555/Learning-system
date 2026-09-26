@@ -44,20 +44,12 @@ export default async function HomePage() {
               </Link>
             )
           ) : (
-            <>
               <Link
                 href="/login"
                 className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-semibold shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
               >
                 เข้าสู่ระบบด้วย Google 🚀
               </Link>
-              <Link
-                href="/login"
-                className="px-6 py-3 rounded-xl glass-panel text-slate-300 hover:text-white hover:border-slate-700 transition-colors"
-              >
-                ทดลองโหมด Demo
-              </Link>
-            </>
           )}
         </div>
       </div>

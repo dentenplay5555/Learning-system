@@ -47,33 +47,6 @@ export default function LoginPage() {
     }
   };
 
-  // ทางเลือกสำหรับ Quick Test / Local Demo เมื่อยังไม่ได้ใส่ Firebase Keys
-  const handleDemoSignIn = async (role: "student" | "teacher") => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const res = await fetch("/api/auth/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ demoRole: role }),
-      });
-
-      if (!res.ok) throw new Error("ไม่สามารถเริ่มโหมด Demo ได้");
-
-      if (role === "teacher") {
-        router.push("/teacher");
-      } else {
-        router.push("/dashboard");
-      }
-      router.refresh();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "เกิดข้อผิดพลาด";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   return (
     <div className="flex flex-1 items-center justify-center px-4 py-12">
@@ -127,36 +100,6 @@ export default function LoginPage() {
             {loading ? "กำลังเชื่อมต่อ..." : "Sign in with Google"}
           </button>
 
-          {/* Quick Demo Options (แสดงเฉพาะโหมด Development เท่านั้น) */}
-          {process.env.NODE_ENV !== "production" && (
-            <>
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-800"></div>
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-[#0f172a] px-3 text-slate-500 font-medium">หรือทดสอบโหมด Demo (Dev Only)</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => handleDemoSignIn("student")}
-                  disabled={loading}
-                  className="py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-300 hover:text-white transition-colors cursor-pointer"
-                >
-                  👨‍🎓 Student Demo
-                </button>
-                <button
-                  onClick={() => handleDemoSignIn("teacher")}
-                  disabled={loading}
-                  className="py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-cyan-300 hover:text-cyan-200 transition-colors cursor-pointer"
-                >
-                  👨‍🏫 Teacher Demo
-                </button>
-              </div>
-            </>
-          )}
         </div>
 
         <div className="mt-8 pt-6 border-t border-slate-800/80 text-center">

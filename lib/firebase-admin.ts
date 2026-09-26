@@ -49,23 +49,6 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (!sessionCookie) {
     return null;
   }
-
-  // หากอยู่ในโหมด Demo / Dev ที่จำลอง Session
-  if (sessionCookie.startsWith("demo_session_")) {
-    // Safety Net: ปฏิเสธ demo session ทุกกรณีใน production หรือเมื่อเชื่อมต่อ Firebase Admin จริง
-    if (process.env.NODE_ENV === "production" || isFirebaseAdminConfigured) {
-      return null;
-    }
-    const role = sessionCookie.includes("teacher") ? "teacher" : "student";
-    return {
-      uid: sessionCookie.replace("demo_session_", ""),
-      email: role === "teacher" ? "teacher@school.ac.th" : "student@school.ac.th",
-      name: role === "teacher" ? "อาจารย์สมศักดิ์ นำชัย" : "นายเอกชัย ตั้งใจเรียน",
-      role,
-      classIds: ["class-m4-1", "class-m4-2"],
-    };
-  }
-
   try {
     const decodedToken = await adminAuth.verifySessionCookie(sessionCookie, true);
     

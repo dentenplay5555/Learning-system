@@ -1,41 +1,16 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { adminAuth, adminDb, isFirebaseAdminConfigured, FieldValue } from "@/lib/firebase-admin";
+import { adminAuth, adminDb, FieldValue } from "@/lib/firebase-admin";
+
 
 const EXPIRES_IN_MS = 60 * 60 * 24 * 5 * 1000; // 5 วัน
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { idToken, demoRole } = body;
+    const { idToken } = body;
 
     const cookieStore = await cookies();
-
-    // 1. ตรวจสอบเงื่อนไข Demo mode อย่างเข้มงวด (ต้องไม่ใช่ production และยังไม่ได้ตั้งค่า Firebase Admin)
-    const demoModeAllowed = process.env.NODE_ENV !== "production" && !isFirebaseAdminConfigured;
-
-    if (demoRole) {
-      if (!demoModeAllowed) {
-        return NextResponse.json(
-          { error: "ไม่อนุญาตให้ใช้โหมด Demo ในสภาพแวดล้อมนี้" },
-          { status: 403 }
-        );
-      }
-
-      cookieStore.set("session", `demo_session_${demoRole}`, {
-        maxAge: 60 * 60 * 24 * 5,
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        path: "/",
-      });
-
-      return NextResponse.json({
-        status: "success",
-        isDemo: true,
-        role: demoRole,
-      });
-    }
 
     if (!idToken) {
       return NextResponse.json(

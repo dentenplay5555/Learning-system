@@ -2,7 +2,8 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { getSessionUser, adminDb, isFirebaseAdminConfigured, FieldValue } from "@/lib/firebase-admin";
+import { getSessionUser, adminDb, FieldValue } from "@/lib/firebase-admin";
+
 
 export interface SubmitResult {
   success: boolean;
@@ -39,18 +40,6 @@ export async function submitAssignmentAction(
     // 1. ดึงข้อมูลโจทย์เพื่อเช็คเวลาส่งงาน (Deadline Check)
     const assignmentDoc = await adminDb.collection("assignments").doc(assignmentId).get();
     
-    // Fallback เฉพาะโหมด Local Dev เมื่อยังไม่มี doc จริงใน Firestore และไม่ได้อยู่บน production
-    if (!assignmentDoc.exists && !isFirebaseAdminConfigured && process.env.NODE_ENV !== "production") {
-      let mockScore = 0;
-      const count = Object.keys(studentAnswers).length;
-      mockScore = count > 0 ? count * 10 : 20;
-      return {
-        success: true,
-        score: mockScore,
-        maxScore: 30,
-        submissionId,
-      };
-    }
 
     if (!assignmentDoc.exists) {
       return { success: false, error: "ไม่พบแบบฝึกหัดนี้" };
