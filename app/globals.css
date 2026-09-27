@@ -1,55 +1,51 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
 :root {
-  --background: #090d16;
-  --foreground: #f1f5f9;
-  --card-bg: rgba(15, 23, 42, 0.75);
-  --card-border: rgba(51, 65, 85, 0.45);
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
-  --accent: #06b6d4;
-  --success: #10b981;
+  --background: #0d1117;
+  --foreground: #c9d1d9;
+  --card-bg: #161b22;
+  --card-border: #30363d;
+  --primary: #238636;
+  --primary-hover: #2ea043;
+  --link: #58a6ff;
+  --accent: #1f6feb;
+  --purple: #8957e5;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
 }
 
 body {
   background-color: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: "Inter", "Noto Sans Thai", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   min-height: 100vh;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Glassmorphism styling */
+/* ─── Card surface ─── */
 .glass-panel {
   background: var(--card-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--card-border);
+  border-radius: 16px;
 }
 
 .glass-panel-hover {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .glass-panel-hover:hover {
-  border-color: rgba(99, 102, 241, 0.4);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 24px -10px rgba(79, 70, 229, 0.2);
+  border-color: rgba(99, 102, 241, 0.35);
+  box-shadow: 0 4px 24px -8px rgba(99, 102, 241, 0.12);
 }
 
-/* Subtle glow gradients */
-.glow-gradient {
-  background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 65%);
-}
-
-.glow-accent {
-  background: radial-gradient(circle at 100% 100%, rgba(6, 182, 212, 0.1) 0%, transparent 60%);
-}
-
-/* Page transition — เล่นทุกครั้งที่เปลี่ยน route (ดู components/PageTransition.tsx) */
+/* ─── Page transitions (components/PageTransition.tsx) ─── */
 @keyframes page-fade-slide-in {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -57,14 +53,14 @@ body {
   }
 }
 .page-transition {
-  animation: page-fade-slide-in 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: page-fade-slide-in 0.22s ease-out;
 }
 
-/* Toast notifications (ดู components/Toast.tsx) */
+/* ─── Toast (components/Toast.tsx) ─── */
 @keyframes toast-slide-in {
   from {
     opacity: 0;
-    transform: translateX(16px);
+    transform: translateX(12px);
   }
   to {
     opacity: 1;
@@ -72,21 +68,68 @@ body {
   }
 }
 .toast-in {
-  animation: toast-slide-in 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: toast-slide-in 0.2s ease-out;
 }
 
-/* Custom scrollbars */
+@keyframes toast-progress-shrink {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+.toast-progress {
+  animation: toast-progress-shrink 4s linear forwards;
+}
+
+/* ─── Scrollbar ─── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #334155;
+  background: #2d303a;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: #3f4350;
 }
+
+/* ─── Checkmark micro-animation ─── */
+@keyframes stroke-circle-draw {
+  from { stroke-dashoffset: 140; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes stroke-check-draw {
+  from { stroke-dashoffset: 40; }
+  to { stroke-dashoffset: 0; }
+}
+.stroke-circle-animate {
+  animation: stroke-circle-draw 0.5s ease forwards;
+}
+.stroke-check-animate {
+  animation: stroke-check-draw 0.35s ease 0.3s forwards;
+}
+
+/* ─── Skeleton shimmer ─── */
+@keyframes shimmer-wave {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(30, 33, 44, 0.7) 0%,
+    rgba(50, 54, 68, 0.7) 50%,
+    rgba(30, 33, 44, 0.7) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-wave 1.6s ease-in-out infinite;
+}
+
+/* ─── Progress bar transition ─── */
+.progress-bar-smooth {
+  transition: width 0.4s ease;
+}
+
+

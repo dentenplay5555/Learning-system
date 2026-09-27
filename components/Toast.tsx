@@ -52,12 +52,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       {children}
 
       {/* Toast stack — ลอยมุมขวาบน อยู่นอก layout ปกติ ไม่ดันเนื้อหาอื่น */}
-      <div className="fixed top-20 right-4 z-[100] flex flex-col gap-2 w-[calc(100%-2rem)] max-w-sm pointer-events-none">
+      <div className="fixed top-20 right-4 z-[100] flex flex-col gap-2.5 w-[calc(100%-2rem)] max-w-sm pointer-events-none">
         {toasts.map((t) => (
           <div
             key={t.id}
             role="status"
-            className={`toast-in pointer-events-auto px-4 py-3 rounded-xl shadow-2xl border text-xs font-medium backdrop-blur-md flex items-start gap-2.5 ${
+            className={`toast-in pointer-events-auto relative overflow-hidden rounded-xl shadow-2xl border text-xs font-medium backdrop-blur-md transition-all ${
               t.type === "success"
                 ? "bg-emerald-950/90 border-emerald-700/50 text-emerald-200"
                 : t.type === "error"
@@ -65,17 +65,30 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 : "bg-slate-900/90 border-slate-700/50 text-slate-200"
             }`}
           >
-            <span className="shrink-0">
-              {t.type === "success" ? "✅" : t.type === "error" ? "⚠️" : "ℹ️"}
-            </span>
-            <span className="flex-1 leading-relaxed">{t.message}</span>
-            <button
-              onClick={() => removeToast(t.id)}
-              aria-label="ปิดข้อความแจ้งเตือน"
-              className="text-current opacity-60 hover:opacity-100 transition-opacity cursor-pointer shrink-0"
-            >
-              ✕
-            </button>
+            <div className="px-4 py-3 flex items-start gap-2.5">
+              <span className="shrink-0 text-sm">
+                {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "ℹ"}
+              </span>
+              <span className="flex-1 leading-relaxed">{t.message}</span>
+              <button
+                onClick={() => removeToast(t.id)}
+                aria-label="ปิดข้อความแจ้งเตือน"
+                className="text-current opacity-50 hover:opacity-100 transition-opacity cursor-pointer shrink-0 ml-1 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Micro-animation countdown progress line */}
+            <div
+              className={`h-[2px] toast-progress opacity-80 ${
+                t.type === "success"
+                  ? "bg-emerald-400"
+                  : t.type === "error"
+                  ? "bg-rose-400"
+                  : "bg-cyan-400"
+              }`}
+            />
           </div>
         ))}
       </div>

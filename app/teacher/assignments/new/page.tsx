@@ -25,6 +25,9 @@ export default function NewAssignmentPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [classId, setClassId] = useState("class-m4-1");
+  const [assignmentType, setAssignmentType] = useState<"practice" | "quiz" | "exam">("practice");
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(0);
+  const [allowRetake, setAllowRetake] = useState(true);
 
   // BUG-10: Due Date Dynamic — กำหนดค่าเริ่มต้นเป็น 7 วันข้างหน้าเวลา 23:59 ในเขตเวลาไทย
   const [dueAt, setDueAt] = useState(() => getDefaultDueDateTimeLocal());
@@ -40,9 +43,22 @@ export default function NewAssignmentPage() {
     },
   ]);
 
+  const handleSelectType = (type: "practice" | "quiz" | "exam") => {
+    setAssignmentType(type);
+    if (type === "practice") {
+      setAllowRetake(true);
+      setTimeLimitMinutes(0);
+    } else if (type === "quiz") {
+      setAllowRetake(false);
+      setTimeLimitMinutes(30);
+    } else if (type === "exam") {
+      setAllowRetake(false);
+      setTimeLimitMinutes(60);
+    }
+  };
+
   const handleAddQuestion = () => {
     const nextIndex = questions.length + 1;
-    // BUG-08: สุ่ม ID ไม่ให้ซ้ำกัน
     const uniqueId = `q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     setQuestions((prev) => [
       ...prev,
@@ -70,7 +86,6 @@ export default function NewAssignmentPage() {
     });
   };
 
-  // BUG-14: สลับประเภทข้อสอบ (multiple_choice <-> true_false)
   const handleTypeChange = (index: number, newType: "multiple_choice" | "true_false") => {
     setQuestions((prev) => {
       const copy = [...prev];
@@ -113,11 +128,13 @@ export default function NewAssignmentPage() {
     try {
       setLoading(true);
 
-      // เรียก Server Action ซึ่งจะแยก questions กับ answerKeys เก็บคนละ collection
       const res = await createAssignmentAction({
         title,
         description,
         classId,
+        type: assignmentType,
+        timeLimitMinutes: Number(timeLimitMinutes) || 0,
+        allowRetake: assignmentType === "practice" ? true : allowRetake,
         dueAt,
         questions,
       });
@@ -126,7 +143,7 @@ export default function NewAssignmentPage() {
         throw new Error(res.error || "ไม่สามารถสร้างแบบฝึกหัดได้");
       }
 
-      showToast("สร้างแบบฝึกหัดสำเร็จ", "success");
+      showToast("สร้างงานในระบบเรียบร้อยแล้ว", "success");
       router.push("/teacher");
       router.refresh();
     } catch (err: unknown) {
@@ -141,64 +158,128 @@ export default function NewAssignmentPage() {
   const totalPoints = questions.reduce((sum, q) => sum + (Number(q.points) || 0), 0);
 
   return (
-    <div className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10">
-      <form onSubmit={handleSubmit} className="space-y-8">
+    <div className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <form onSubmit={handleSubmit} className="space-y-6">
         {/* Top Header */}
-        <div className="glass-panel rounded-3xl p-6 sm:p-8 space-y-2">
+        <div className="rounded-xl border border-[#30363d] bg-[#161b22] p-6 space-y-2">
           <div className="flex items-center justify-between">
             <Link
               href="/teacher"
-              className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition-colors"
+              className="text-xs font-mono text-[#8b949e] hover:text-[#f0f6fc] flex items-center gap-1 transition-colors"
             >
               ← กลับ Dashboard คุณครู
             </Link>
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-[#1f6feb]/15 text-[#58a6ff] border border-[#1f6feb]/30">
               คะแนนเต็มรวม: {totalPoints} คะแนน
             </span>
           </div>
 
-          <h1 className="text-2xl sm:text-3xl font-bold text-white pt-2">
-            สร้างแบบฝึกหัดใหม่
+          <h1 className="text-xl sm:text-2xl font-bold text-[#f0f6fc] pt-1">
+            สร้างแบบฝึกหัด / ข้อสอบใหม่
           </h1>
-          <p className="text-xs sm:text-sm text-slate-400">
-            ระบบจะแยกคำตอบที่ถูกต้อง (Answer Key) ไปเก็บในคอลเลกชันความปลอดภัยสูงโดยอัตโนมัติ
+          <p className="text-xs text-[#8b949e]">
+            เฉลยจะถูกแยกเก็บไว้บน Firestore Private Collection อัตโนมัติ ป้องกันนักเรียนแอบเปิดดู
           </p>
         </div>
 
-        {/* Basic Details Section */}
-        <div className="glass-panel rounded-3xl p-6 sm:p-8 space-y-4">
-          <h2 className="text-base font-bold text-white">ข้อมูลพื้นฐานของแบบฝึกหัด</h2>
+        {/* ─── 1. Assignment Type Selector (Practice vs Quiz vs Exam) ─── */}
+        <div className="rounded-xl border border-[#30363d] bg-[#161b22] p-6 space-y-3">
+          <label className="text-xs font-bold text-[#f0f6fc] flex items-center gap-2">
+            <span>📚</span>
+            <span>เลือกประเภทการเรียนรู้</span>
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* 🟢 แบบฝึกหัด (Practice) */}
+            <div
+              onClick={() => handleSelectType("practice")}
+              className={`rounded-xl border p-4 cursor-pointer transition-all ${
+                assignmentType === "practice"
+                  ? "border-[#3fb950] bg-[#238636]/15 shadow-sm"
+                  : "border-[#30363d] bg-[#0d1117] hover:border-[#8b949e]"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-base font-bold text-[#3fb950]">🟢 แบบฝึกหัด</span>
+                {assignmentType === "practice" && <span className="text-[#3fb950]">✓</span>}
+              </div>
+              <p className="text-[11px] text-[#8b949e] mt-2 leading-relaxed">
+                เน้นฝึกฝนความเข้าใจ ทำซ้ำได้ไม่จำกัด แสดงเฉลยหลังทำ เพื่อการเรียนรู้
+              </p>
+            </div>
+
+            {/* 🔵 แบบทดสอบ (Quiz) */}
+            <div
+              onClick={() => handleSelectType("quiz")}
+              className={`rounded-xl border p-4 cursor-pointer transition-all ${
+                assignmentType === "quiz"
+                  ? "border-[#58a6ff] bg-[#1f6feb]/15 shadow-sm"
+                  : "border-[#30363d] bg-[#0d1117] hover:border-[#8b949e]"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-base font-bold text-[#58a6ff]">🔵 แบบทดสอบ</span>
+                {assignmentType === "quiz" && <span className="text-[#58a6ff]">✓</span>}
+              </div>
+              <p className="text-[11px] text-[#8b949e] mt-2 leading-relaxed">
+                เน้นวัดความเข้าใจบทเรียน มีคะแนนเก็บ มีเวลาจำกัดหรือกำหนดส่ง
+              </p>
+            </div>
+
+            {/* 🔴 การสอบ (Exam) */}
+            <div
+              onClick={() => handleSelectType("exam")}
+              className={`rounded-xl border p-4 cursor-pointer transition-all ${
+                assignmentType === "exam"
+                  ? "border-[#f85149] bg-[#da3633]/15 shadow-sm"
+                  : "border-[#30363d] bg-[#0d1117] hover:border-[#8b949e]"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-base font-bold text-[#f85149]">🔴 การสอบ</span>
+                {assignmentType === "exam" && <span className="text-[#f85149]">✓</span>}
+              </div>
+              <p className="text-[11px] text-[#8b949e] mt-2 leading-relaxed">
+                ประเมินผลทางการ ส่งได้ 1 ครั้ง จำกัดเวลา ล็อกคำตอบและบันทึกคะแนนจริง
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* ─── 2. Basic Details Section ─── */}
+        <div className="rounded-xl border border-[#30363d] bg-[#161b22] p-6 space-y-4">
+          <h2 className="text-sm font-bold text-[#f0f6fc]">ข้อมูลพื้นฐาน</h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2 space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">ชื่อแบบฝึกหัด *</label>
+              <label className="text-xs font-mono text-[#c9d1d9]">ชื่อหัวข้องาน / ข้อสอบ *</label>
               <input
                 type="text"
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="เช่น แบบทดสอบฟิสิกส์เรื่องแรงและการเคลื่อนที่"
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                placeholder="เช่น แบบฝึกหัดเรื่องสมการเชิงเส้น หรือ สอบกลางภาคคณิตศาสตร์"
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#0d1117] border border-[#30363d] text-sm text-[#f0f6fc] focus:outline-none focus:border-[#58a6ff] transition-colors"
               />
             </div>
 
             <div className="sm:col-span-2 space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">คำอธิบายเพิ่มเติม</label>
+              <label className="text-xs font-mono text-[#c9d1d9]">คำอธิบายและคำชี้แจง</label>
               <textarea
-                rows={3}
+                rows={2}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="ระบุคำชี้แจงสำหรับนักเรียน..."
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                placeholder="ระบุคำชี้แจงสำหรับนักเรียน เช่น ข้อสอบมี 10 ข้อ ให้เลือกคำตอบที่ดีที่สุด..."
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#0d1117] border border-[#30363d] text-sm text-[#f0f6fc] focus:outline-none focus:border-[#58a6ff] transition-colors resize-none"
               />
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">ห้องเรียนเป้าหมาย</label>
+              <label className="text-xs font-mono text-[#c9d1d9]">ห้องเรียนเป้าหมาย</label>
               <select
                 value={classId}
                 onChange={(e) => setClassId(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500"
+                className="w-full px-3.5 py-2 rounded-lg bg-[#0d1117] border border-[#30363d] text-xs text-[#f0f6fc] focus:outline-none focus:border-[#58a6ff]"
               >
                 <option value="class-m4-1">ห้อง ม.4/1</option>
                 <option value="class-m4-2">ห้อง ม.4/2</option>
@@ -207,28 +288,43 @@ export default function NewAssignmentPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300">วันและเวลาครบกำหนดส่ง (Due Date)</label>
+              <label className="text-xs font-mono text-[#c9d1d9]">วันและเวลาครบกำหนดส่ง</label>
               <input
                 type="datetime-local"
                 required
                 value={dueAt}
                 onChange={(e) => setDueAt(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500"
+                className="w-full px-3.5 py-2 rounded-lg bg-[#0d1117] border border-[#30363d] text-xs text-[#f0f6fc] focus:outline-none focus:border-[#58a6ff]"
+              />
+            </div>
+
+            {/* Time limit for quiz/exam */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-mono text-[#c9d1d9]">
+                จำกัดเวลาทำ (นาที) — 0 คือไม่จำกัด
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={300}
+                value={timeLimitMinutes}
+                onChange={(e) => setTimeLimitMinutes(Number(e.target.value))}
+                className="w-full px-3.5 py-2 rounded-lg bg-[#0d1117] border border-[#30363d] text-xs text-[#f0f6fc] focus:outline-none focus:border-[#58a6ff]"
               />
             </div>
           </div>
         </div>
 
-        {/* Questions Builder */}
-        <div className="space-y-6">
+        {/* ─── 3. Questions Builder ─── */}
+        <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <h2 className="text-sm font-bold text-[#f0f6fc] flex items-center gap-2">
               <span>✍️</span> ข้อสอบและเฉลย ({questions.length} ข้อ)
             </h2>
             <button
               type="button"
               onClick={handleAddQuestion}
-              className="px-4 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-300 text-xs font-semibold transition-colors cursor-pointer"
+              className="px-3.5 py-1.5 rounded-md bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-[#58a6ff] text-xs font-mono transition-colors cursor-pointer"
             >
               + เพิ่มข้อสอบ
             </button>
@@ -237,53 +333,33 @@ export default function NewAssignmentPage() {
           {questions.map((q, qIndex) => (
             <div
               key={q.id}
-              className="glass-panel rounded-3xl p-6 sm:p-8 space-y-4 relative border-l-4 border-l-cyan-500"
+              className="rounded-xl border border-[#30363d] bg-[#161b22] p-5 space-y-4 relative"
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-bold text-cyan-400 bg-cyan-950/60 px-3 py-1 rounded-lg border border-cyan-800/40">
+              <div className="flex items-center justify-between border-b border-[#21262d] pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono font-bold text-[#58a6ff] bg-[#1f6feb]/15 px-2 py-0.5 rounded border border-[#1f6feb]/30">
                     ข้อที่ {qIndex + 1}
                   </span>
-
-                  {/* BUG-14: สลับระหว่าง ปรนัย (4 ตัวเลือก) และ ถูก/ผิด */}
-                  <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => handleTypeChange(qIndex, "multiple_choice")}
-                      className={`px-2.5 py-1 rounded-md transition-colors ${
-                        q.type === "multiple_choice"
-                          ? "bg-cyan-600 text-white font-semibold"
-                          : "text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      ปรนัย (4 ตัวเลือก)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleTypeChange(qIndex, "true_false")}
-                      className={`px-2.5 py-1 rounded-md transition-colors ${
-                        q.type === "true_false"
-                          ? "bg-cyan-600 text-white font-semibold"
-                          : "text-slate-400 hover:text-white"
-                      }`}
-                    >
-                      ถูก / ผิด (True/False)
-                    </button>
-                  </div>
+                  <select
+                    value={q.type}
+                    onChange={(e) => handleTypeChange(qIndex, e.target.value as "multiple_choice" | "true_false")}
+                    className="bg-[#0d1117] border border-[#30363d] rounded px-2 py-1 text-xs text-[#c9d1d9]"
+                  >
+                    <option value="multiple_choice">ปรนัย (4 ตัวเลือก)</option>
+                    <option value="true_false">ถูก/ผิด (True/False)</option>
+                  </select>
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 text-xs text-slate-300">
+                  <div className="flex items-center gap-1.5 text-xs text-[#8b949e]">
                     <span>คะแนน:</span>
                     <input
                       type="number"
                       min={1}
                       max={100}
                       value={q.points}
-                      onChange={(e) =>
-                        handleQuestionChange(qIndex, "points", parseInt(e.target.value) || 1)
-                      }
-                      className="w-16 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-center text-xs text-white"
+                      onChange={(e) => handleQuestionChange(qIndex, "points", Number(e.target.value))}
+                      className="w-16 px-2 py-0.5 rounded bg-[#0d1117] border border-[#30363d] text-center text-xs text-white"
                     />
                   </div>
 
@@ -291,7 +367,7 @@ export default function NewAssignmentPage() {
                     <button
                       type="button"
                       onClick={() => handleRemoveQuestion(qIndex)}
-                      className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded-lg hover:bg-red-950/40 transition-colors"
+                      className="text-[#f85149] hover:text-red-300 text-xs px-2 py-1 rounded hover:bg-red-950/20"
                     >
                       ลบข้อนี้
                     </button>
@@ -301,84 +377,84 @@ export default function NewAssignmentPage() {
 
               {/* Prompt */}
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300">โจทย์คำถาม</label>
-                <input
-                  type="text"
+                <label className="text-xs text-[#8b949e]">โจทย์คำถาม *</label>
+                <textarea
+                  rows={2}
                   required
                   value={q.prompt}
                   onChange={(e) => handleQuestionChange(qIndex, "prompt", e.target.value)}
-                  placeholder="พิมพ์คำถามที่นี่..."
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500"
+                  placeholder="พิมพ์โจทย์คำถามที่นี่..."
+                  className="w-full px-3.5 py-2 rounded-lg bg-[#0d1117] border border-[#30363d] text-xs text-white focus:outline-none focus:border-[#58a6ff] resize-none"
                 />
               </div>
 
-              {/* Options & Radio for correct answer */}
-              <div className="space-y-2 pt-2">
-                <label className="text-xs font-semibold text-slate-400 flex items-center justify-between">
-                  <span>ตัวเลือก (คลิกวงกลมเพื่อเลือกเป็นคำตอบที่ถูกต้อง / Answer Key)</span>
-                  <span className="text-[10px] text-emerald-400">เฉลยจะถูกซ่อนจากนักเรียน 🔒</span>
+              {/* Options */}
+              <div className="space-y-2 pt-1">
+                <label className="text-xs text-[#8b949e] flex items-center justify-between">
+                  <span>ตัวเลือก (คลิกวงกลมเพื่อเลือกข้อที่ถูกต้องเป็นเฉลย):</span>
+                  <span className="text-[#3fb950] font-mono text-[11px]">
+                    เฉลย: ตัวเลือกที่ {String.fromCharCode(65 + Number(q.correctAnswer))}
+                  </span>
                 </label>
 
-                <div className="space-y-2">
-                  {q.options.map((opt, optIndex) => {
-                    const isCorrect = q.correctAnswer === optIndex;
-
-                    return (
-                      <div
-                        key={optIndex}
-                        className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all ${
-                          isCorrect
-                            ? "bg-emerald-950/30 border-emerald-500/60"
-                            : "bg-slate-900/60 border-slate-800"
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {q.options.map((opt, optIndex) => (
+                    <div
+                      key={optIndex}
+                      className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${
+                        q.correctAnswer === optIndex
+                          ? "border-[#3fb950] bg-[#238636]/10"
+                          : "border-[#30363d] bg-[#0d1117]"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleQuestionChange(qIndex, "correctAnswer", optIndex)}
+                        className={`w-6 h-6 rounded-full border flex items-center justify-center text-xs font-mono shrink-0 cursor-pointer ${
+                          q.correctAnswer === optIndex
+                            ? "border-[#3fb950] bg-[#238636] text-white"
+                            : "border-[#30363d] text-[#8b949e] hover:border-[#8b949e]"
                         }`}
                       >
-                        <input
-                          type="radio"
-                          name={`correct_${q.id}`}
-                          checked={isCorrect}
-                          onChange={() => handleQuestionChange(qIndex, "correctAnswer", optIndex)}
-                          className="w-4 h-4 text-emerald-500 accent-emerald-500 cursor-pointer"
-                        />
-                        <span className="text-xs font-bold text-slate-400 w-5">
-                          {String.fromCharCode(65 + optIndex)}.
-                        </span>
-                        <input
-                          type="text"
-                          required
-                          value={opt}
-                          onChange={(e) => handleOptionChange(qIndex, optIndex, e.target.value)}
-                          placeholder={`ตัวเลือก ${String.fromCharCode(65 + optIndex)}`}
-                          className="flex-1 bg-transparent text-xs sm:text-sm text-white focus:outline-none"
-                        />
-                        {isCorrect && (
-                          <span className="text-[10px] font-bold text-emerald-400 px-2 py-0.5 rounded-md bg-emerald-950/60 border border-emerald-800/40">
-                            เฉลยถูกต้อง ✓
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+                        {String.fromCharCode(65 + optIndex)}
+                      </button>
+
+                      <input
+                        type="text"
+                        required
+                        value={opt}
+                        onChange={(e) => handleOptionChange(qIndex, optIndex, e.target.value)}
+                        className="w-full bg-transparent border-none text-xs text-[#f0f6fc] focus:outline-none"
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center justify-end gap-4 pt-4 border-t border-slate-800/80">
+        {/* Submit Actions */}
+        <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#30363d]">
           <Link
             href="/teacher"
-            className="px-5 py-3 rounded-xl text-xs font-medium text-slate-400 hover:text-white border border-slate-800 hover:bg-slate-800 transition-colors"
+            className="px-4 py-2 rounded-md bg-[#21262d] hover:bg-[#30363d] border border-[#30363d] text-xs font-mono text-[#c9d1d9]"
           >
             ยกเลิก
           </Link>
           <button
             type="submit"
             disabled={loading}
-            className="px-8 py-3 rounded-xl bg-gradient-to-r from-cyan-600 via-cyan-500 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs shadow-xl shadow-cyan-600/30 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+            className="px-5 py-2 rounded-md bg-[#238636] hover:bg-[#2ea043] border border-[rgba(240,246,252,0.1)] text-white text-xs font-medium flex items-center gap-2 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
           >
-            {loading && <Spinner className="w-4 h-4" />}
-            {loading ? "กำลังบันทึกและแยกเฉลย..." : "บันทึกและเผยแพร่แบบฝึกหัด 🚀"}
+            {loading ? (
+              <>
+                <Spinner className="w-3.5 h-3.5 text-white" />
+                <span>กำลังบันทึก...</span>
+              </>
+            ) : (
+              <span>บันทึกและเผยแพร่</span>
+            )}
           </button>
         </div>
       </form>

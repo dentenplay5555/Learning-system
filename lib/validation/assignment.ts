@@ -57,7 +57,9 @@ export const createAssignmentSchema = z.object({
     .min(1, "ชื่อแบบฝึกหัดต้องไม่ว่าง")
     .max(200, "ชื่อแบบฝึกหัดยาวเกิน 200 ตัวอักษร"),
   description: z.string().max(2000, "คำอธิบายยาวเกิน 2000 ตัวอักษร").default(""),
-  classId: z.string().trim().min(1, "ต้องระบุห้องเรียน"),
+  type: z.enum(["practice", "quiz", "exam"]).default("practice"),
+  timeLimitMinutes: z.number().min(0).max(300).default(0),
+  allowRetake: z.boolean().default(false),
   dueAt: z.string().trim().min(1, "ต้องระบุวันและเวลากำหนดส่ง"),
   questions: z
     .array(questionSchema)

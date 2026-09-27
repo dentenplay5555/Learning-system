@@ -22,6 +22,13 @@ import { redirect } from "next/navigation";
 import { getSessionUser, adminDb, FieldValue } from "@/lib/firebase-admin";
 import { canAccessTeacherArea, isUserMemberOfClass } from "@/lib/auth";
 import { createAssignmentSchema, submitAnswersSchema } from "@/lib/validation/assignment";
+import {
+  createInquirySchema,
+  replyInquirySchema,
+  closeInquirySchema,
+  CreateInquiryInput,
+  ReplyInquiryInput,
+} from "@/lib/validation/inquiry";
 import { DateTime } from "luxon";
 
 export interface SubmitResult {
@@ -30,6 +37,8 @@ export interface SubmitResult {
   score?: number;
   maxScore?: number;
   submissionId?: string;
+  solutions?: Record<string, string | number>;
+  isPractice?: boolean;
 }
 
 interface QuestionItem {
@@ -137,17 +146,20 @@ export async function submitAssignmentAction(
       totalMaxScore = questions.reduce((acc: number, cur: QuestionItem) => acc + (cur.points || 1), 0);
     }
 
-    // BUG-06 + BUG-19: ใช้ transaction + tx.create() ป้องกัน race condition และ duplicate submission
+    const isPractice = assignmentData.type === "practice" || !!assignmentData.allowRetake;
+
+    // BUG-06 + BUG-19: ใช้ transaction ป้องกัน race condition
     const submissionRef = adminDb.collection("submissions").doc(submissionId);
 
     await adminDb.runTransaction(async (tx) => {
       const submissionSnap = await tx.get(submissionRef);
 
-      if (submissionSnap.exists) {
+      // ถ้าเป็น quiz หรือ exam ไม่อนุญาตให้ส่งซ้ำ
+      if (submissionSnap.exists && !isPractice) {
         throw new Error("ALREADY_SUBMITTED");
       }
 
-      tx.create(submissionRef, {
+      const submissionPayload = {
         assignmentId,
         studentId: user.uid,
         classId: assignmentData.classId || "unknown",
@@ -157,7 +169,13 @@ export async function submitAssignmentAction(
         status: "graded",
         submittedAt: FieldValue.serverTimestamp(),
         gradedAt: FieldValue.serverTimestamp(),
-      });
+      };
+
+      if (submissionSnap.exists) {
+        tx.set(submissionRef, submissionPayload, { merge: true });
+      } else {
+        tx.create(submissionRef, submissionPayload);
+      }
     });
 
     return {
@@ -165,6 +183,8 @@ export async function submitAssignmentAction(
       score: calculatedScore,
       maxScore: totalMaxScore,
       submissionId,
+      isPractice,
+      solutions: isPractice ? correctMap : undefined,
     };
   } catch (err: unknown) {
     // BUG-17: Error Leakage → log จริง แต่ส่ง safe message
@@ -263,6 +283,9 @@ export async function createAssignmentAction(formData: {
       teacherId: user.uid,
       title: data.title,
       description: data.description,
+      type: data.type || "practice",
+      timeLimitMinutes: data.timeLimitMinutes || 0,
+      allowRetake: data.allowRetake || false,
       maxScore,
       dueAt,
       createdAt: FieldValue.serverTimestamp(),
@@ -282,6 +305,130 @@ export async function createAssignmentAction(formData: {
     // BUG-17: Error Leakage → log จริง แต่ส่ง safe message
     console.error("Create assignment failed:", err);
     return { success: false, error: "เกิดข้อผิดพลาด กรุณาลองใหม่" };
+  }
+}
+
+/**
+ * Server Action: นักเรียนส่งข้อความติดต่อครู (Ask / Contact Teacher)
+ */
+export async function createInquiryAction(formData: CreateInquiryInput) {
+  const user = await getSessionUser();
+  if (!user) {
+    return { success: false, error: "กรุณาเข้าสู่ระบบก่อนส่งคำถาม" };
+  }
+
+  const parsed = createInquirySchema.safeParse(formData);
+  if (!parsed.success) {
+    const errorMsg = parsed.error.issues[0]?.message || "ข้อมูลคำถามไม่ถูกต้อง";
+    return { success: false, error: errorMsg };
+  }
+
+  const data = parsed.data;
+
+  try {
+    const inquiryRef = adminDb.collection("inquiries").doc();
+    await inquiryRef.set({
+      studentId: user.uid,
+      studentName: user.name || "นักเรียน",
+      studentEmail: user.email || "",
+      classId: data.classId,
+      category: data.category,
+      title: data.title,
+      content: data.content,
+      context: data.context || null,
+      status: "OPEN",
+      reply: null,
+      answeredAt: null,
+      answeredBy: null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { success: true, inquiryId: inquiryRef.id };
+  } catch (err) {
+    console.error("Create inquiry failed:", err);
+    return { success: false, error: "ไม่สามารถส่งคำถามได้ กรุณาลองใหม่อีกครั้ง" };
+  }
+}
+
+/**
+ * Server Action: คุณครูตอบข้อความนักเรียน และปรับสถานะ (OPEN → ANSWERED / CLOSED)
+ */
+export async function replyInquiryAction(formData: ReplyInquiryInput) {
+  const user = await getSessionUser();
+  if (!user || !canAccessTeacherArea(user)) {
+    return { success: false, error: "เฉพาะคุณครูเท่านั้นที่สามารถตอบคำถามได้" };
+  }
+
+  const parsed = replyInquirySchema.safeParse(formData);
+  if (!parsed.success) {
+    const errorMsg = parsed.error.issues[0]?.message || "ข้อมูลการตอบไม่ถูกต้อง";
+    return { success: false, error: errorMsg };
+  }
+
+  const { inquiryId, reply, newStatus } = parsed.data;
+
+  try {
+    const docRef = adminDb.collection("inquiries").doc(inquiryId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return { success: false, error: "ไม่พบรายการคำถามนี้" };
+    }
+
+    await docRef.update({
+      reply,
+      status: newStatus,
+      answeredBy: user.name || "คุณครู",
+      answeredAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { success: true };
+  } catch (err) {
+    console.error("Reply inquiry failed:", err);
+    return { success: false, error: "เกิดข้อผิดพลาดในการตอบกลับ" };
+  }
+}
+
+/**
+ * Server Action: ปิดคำถามเมื่อเข้าใจแล้ว (Close Inquiry)
+ */
+export async function closeInquiryAction(inquiryId: string) {
+  const user = await getSessionUser();
+  if (!user) {
+    return { success: false, error: "กรุณาเข้าสู่ระบบก่อน" };
+  }
+
+  const parsed = closeInquirySchema.safeParse({ inquiryId });
+  if (!parsed.success) {
+    return { success: false, error: "Inquiry ID ไม่ถูกต้อง" };
+  }
+
+  try {
+    const docRef = adminDb.collection("inquiries").doc(inquiryId);
+    const snap = await docRef.get();
+    if (!snap.exists) {
+      return { success: false, error: "ไม่พบรายการคำถามนี้" };
+    }
+
+    const data = snap.data()!;
+    // ตรวจว่าผู้ใช้เป็นเจ้าของคำถาม หรือเป็นครู
+    const isOwner = data.studentId === user.uid;
+    const isTeacher = canAccessTeacherArea(user);
+    if (!isOwner && !isTeacher) {
+      return { success: false, error: "คุณไม่มีสิทธิ์ปิดคำถามนี้" };
+    }
+
+    await docRef.update({
+      status: "CLOSED",
+      closedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { success: true };
+  } catch (err) {
+    console.error("Close inquiry failed:", err);
+    return { success: false, error: "เกิดข้อผิดพลาดในการปิดคำถาม" };
   }
 }
 

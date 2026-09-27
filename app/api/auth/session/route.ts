@@ -1,11 +1,7 @@
-// ===================================================================
-// BUG-04: Authentication Fail-open → ตรวจ email, domain, verified
-// BUG-17: Error Leakage → ไม่ส่ง internal error ให้ client
-// ===================================================================
-
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { adminAuth, adminDb, FieldValue } from "@/lib/firebase-admin";
+
 
 const EXPIRES_IN_MS = 60 * 60 * 24 * 5 * 1000; // 5 วัน
 
@@ -26,32 +22,22 @@ export async function POST(request: Request) {
     // 2. ตรวจสอบ ID Token
     const decodedToken = await adminAuth.verifyIdToken(idToken);
 
-    // BUG-04: ต้องมี email
-    if (!decodedToken.email) {
+    // ตรวจสอบ domain โรงเรียน — บังคับต้องตั้งค่าใน production เสมอ
+    // (เดิมเช็คแบบ optional คือถ้าไม่ตั้งค่า env ตัวนี้ ใครก็ล็อกอินด้วย Gmail ส่วนตัวได้หมด
+    //  ซึ่งเสี่ยงเกินไปสำหรับระบบที่ตั้งใจให้ใช้เฉพาะคนในโรงเรียน — เลย fail-closed แทน)
+    const schoolDomain = process.env.NEXT_PUBLIC_SCHOOL_DOMAIN;
+    if (process.env.NODE_ENV === "production" && !schoolDomain) {
+      console.error("Missing NEXT_PUBLIC_SCHOOL_DOMAIN in production — rejecting all logins");
       return NextResponse.json(
-        { error: "ต้องใช้บัญชีที่มีอีเมล" },
-        { status: 403 }
+        { error: "ระบบยังไม่ได้ตั้งค่าโดเมนโรงเรียน กรุณาติดต่อผู้ดูแลระบบ" },
+        { status: 500 }
       );
     }
-
-    // BUG-04: ตรวจ email verification
-    if (!decodedToken.email_verified) {
+    if (schoolDomain && decodedToken.email && !decodedToken.email.endsWith(`@${schoolDomain}`)) {
       return NextResponse.json(
-        { error: "กรุณายืนยันความถูกต้องของอีเมลก่อนเข้าสู่ระบบ" },
+        { error: `กรุณาใช้อีเมลของโรงเรียน (@${schoolDomain}) เท่านั้น` },
         { status: 403 }
       );
-    }
-
-    // BUG-04: ตรวจ domain โรงเรียน — ใช้ env variable ฝั่ง server (ไม่ใช่ NEXT_PUBLIC)
-    const schoolDomain = process.env.SCHOOL_DOMAIN || process.env.NEXT_PUBLIC_SCHOOL_DOMAIN;
-    if (schoolDomain) {
-      const email = decodedToken.email.toLowerCase();
-      if (!email.endsWith(`@${schoolDomain.toLowerCase()}`)) {
-        return NextResponse.json(
-          { error: `กรุณาใช้อีเมลของโรงเรียน (@${schoolDomain}) เท่านั้น` },
-          { status: 403 }
-        );
-      }
     }
 
     // 3. Server Provisioning: สร้าง document /users/{uid} หากล็อกอินครั้งแรก
@@ -59,45 +45,18 @@ export async function POST(request: Request) {
     const userRef = adminDb.collection("users").doc(decodedToken.uid);
     const userDoc = await userRef.get();
 
-    // เช็คว่าอยู่ในรายการครูจาก TEACHER_EMAILS หรือไม่
-    const teacherEmails = (process.env.TEACHER_EMAILS || "")
-      .split(",")
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    const isConfiguredTeacher =
-      !!decodedToken.email &&
-      teacherEmails.includes(decodedToken.email.toLowerCase());
-
-    let role: "student" | "teacher" | "admin" = isConfiguredTeacher ? "teacher" : "student";
-    let classIds: string[] = isConfiguredTeacher ? [] : ["class-m4-1"];
-
+    let role = "student";
     if (!userDoc.exists) {
       await userRef.set({
         email: decodedToken.email || "",
-        displayName: decodedToken.name || (isConfiguredTeacher ? "คุณครู" : "นักเรียน"),
-        role,
-        classIds,
+        displayName: decodedToken.name || "นักเรียน",
+        role: "student", // ค่าเริ่มต้นเป็นนักเรียนเสมอ
+        classIds: [],
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
     } else {
-      const existingData = userDoc.data();
-      role = (existingData?.role as "student" | "teacher" | "admin") || role;
-      if (isConfiguredTeacher && role === "student") {
-        role = "teacher";
-        await userRef.update({
-          role: "teacher",
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      }
-      classIds = existingData?.classIds || classIds;
-      if (role === "student" && (!classIds || classIds.length === 0)) {
-        classIds = ["class-m4-1"];
-        await userRef.update({
-          classIds,
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      }
+      role = userDoc.data()?.role || "student";
     }
 
     // 4. สร้าง Session Cookie
@@ -123,10 +82,10 @@ export async function POST(request: Request) {
       },
     });
   } catch (error: unknown) {
-    // BUG-17: Error Leakage → log จริง แต่ส่ง generic message ให้ client
     console.error("Session creation error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Failed to create session";
     return NextResponse.json(
-      { error: "ไม่สามารถเข้าสู่ระบบได้ กรุณาลองใหม่" },
+      { error: errorMessage },
       { status: 401 }
     );
   }

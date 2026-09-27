@@ -8,6 +8,9 @@ interface AssignmentData {
   title: string;
   description: string;
   classId: string;
+  type: "practice" | "quiz" | "exam";
+  timeLimitMinutes?: number;
+  allowRetake?: boolean;
   maxScore: number;
   questions: Array<{
     id: string;
@@ -34,11 +37,17 @@ export default async function AssignmentDetailPage({
     const doc = await adminDb.collection("assignments").doc(assignmentId).get();
     if (doc.exists) {
       const data = doc.data()!;
+      const assignmentType: "practice" | "quiz" | "exam" =
+        data.type === "quiz" || data.type === "exam" ? data.type : "practice";
+
       assignment = {
         id: doc.id,
         title: data.title || "แบบฝึกหัด",
         description: data.description || "",
         classId: data.classId || "ห้องเรียน",
+        type: assignmentType,
+        timeLimitMinutes: data.timeLimitMinutes || 0,
+        allowRetake: data.allowRetake ?? (assignmentType === "practice"),
         maxScore: data.maxScore || 30,
         questions: data.questions || [],
       };
@@ -59,16 +68,32 @@ export default async function AssignmentDetailPage({
   }
 
   // เช็คว่าเคยส่งงานนี้ไปแล้วหรือยัง
-  let existingSubmission: { score: number; maxScore: number; submissionId: string } | null = null;
+  let existingSubmission: {
+    score: number;
+    maxScore: number;
+    submissionId: string;
+    answers?: Record<string, string | number>;
+  } | null = null;
+
   try {
     const submissionId = `${assignmentId}_${user.uid}`;
     const subDoc = await adminDb.collection("submissions").doc(submissionId).get();
     if (subDoc.exists) {
       const subData = subDoc.data()!;
+      const userAnswers: Record<string, string | number> = {};
+      if (Array.isArray(subData.answers)) {
+        subData.answers.forEach((a: { questionId?: string; selectedAnswer?: string | number | null }) => {
+          if (a.questionId && a.selectedAnswer !== null && a.selectedAnswer !== undefined) {
+            userAnswers[a.questionId] = a.selectedAnswer;
+          }
+        });
+      }
+
       existingSubmission = {
         score: subData.score ?? 0,
         maxScore: subData.maxScore ?? assignment.maxScore,
         submissionId,
+        answers: userAnswers,
       };
     }
   } catch (err) {
