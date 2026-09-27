@@ -51,29 +51,27 @@ export const questionSchema = z
   );
 
 export const createAssignmentSchema = z.object({
-  title: z
-    .string()
-    .trim()
-    .min(1, "ชื่อแบบฝึกหัดต้องไม่ว่าง")
-    .max(200, "ชื่อแบบฝึกหัดยาวเกิน 200 ตัวอักษร"),
-  description: z.string().max(2000, "คำอธิบายยาวเกิน 2000 ตัวอักษร").default(""),
-  type: z.enum(["practice", "quiz", "exam"]).default("practice"),
-  timeLimitMinutes: z.number().min(0).max(300).default(0),
-  allowRetake: z.boolean().default(false),
-  dueAt: z.string().trim().min(1, "ต้องระบุวันและเวลากำหนดส่ง"),
-  questions: z
-    .array(questionSchema)
-    .min(1, "ต้องมีคำถามอย่างน้อย 1 ข้อ")
-    .refine(
-      (items) => {
-        // BUG-08 Checklist: Question ID ห้ามซ้ำ
-        const ids = items.map((q) => q.id);
-        return new Set(ids).size === ids.length;
-      },
-      {
-        message: "Question ID ในแบบฝึกหัดต้องไม่ซ้ำกัน",
-      }
-    ),
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(2000),
+  classId: z.string().trim().min(1),
+
+  type: z.enum(["practice", "quiz", "exam"]),
+
+  timeLimitMinutes: z.number().int().min(0),
+  allowRetake: z.boolean(),
+
+  dueAt: z.string().min(1),
+
+  questions: z.array(
+    z.object({
+      id: z.string(),
+      type: z.enum(["multiple_choice", "true_false"]),
+      prompt: z.string().trim().min(1),
+      options: z.array(z.string()),
+      points: z.number().positive(),
+      correctAnswer: z.union([z.string(), z.number()]),
+    })
+  ).min(1),
 });
 
 export const submitAnswersSchema = z.record(

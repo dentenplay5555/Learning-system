@@ -10,9 +10,12 @@ export const INQUIRY_CATEGORIES = [
 
 export const createInquirySchema = z.object({
   classId: z.string().trim().min(1, "กรุณาระบุห้องเรียน"),
-  category: z.enum(["content", "assignment", "score", "system", "other"], {
-    errorMap: () => ({ message: "กรุณาเลือกประเภทเรื่องที่ต้องการติดต่อ" }),
-  }),
+  category: z.enum(
+  ["content", "assignment", "score", "system", "other"],
+  {
+    message: "กรุณาเลือกประเภทเรื่องที่ต้องการติดต่อ",
+  }
+),
   title: z
     .string()
     .trim()

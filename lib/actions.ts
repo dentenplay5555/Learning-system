@@ -207,6 +207,9 @@ export async function createAssignmentAction(formData: {
   title: string;
   description: string;
   classId: string;
+  type: "practice" | "quiz" | "exam";
+  timeLimitMinutes: number;
+  allowRetake: boolean;
   dueAt: string;
   questions: Array<{
     id: string;
