@@ -20,7 +20,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSessionUser, adminDb, FieldValue } from "@/lib/firebase-admin";
-import { canAccessTeacherArea } from "@/lib/auth";
+import { canAccessTeacherArea, isUserMemberOfClass } from "@/lib/auth";
 import { createAssignmentSchema, submitAnswersSchema } from "@/lib/validation/assignment";
 import { DateTime } from "luxon";
 
@@ -83,38 +83,7 @@ export async function submitAssignmentAction(
 
     // BUG-03: ตรวจ Class Membership — student ต้องอยู่ในห้องเรียนของ assignment
     if (assignmentData.classId) {
-      let isMember = false;
-
-      // ตรวจ 1: studentIds array ใน document ของ classes/{classId}
-      const classSnap = await adminDb.collection("classes").doc(assignmentData.classId).get();
-      if (classSnap.exists) {
-        const classData = classSnap.data();
-        if (Array.isArray(classData?.studentIds) && classData.studentIds.includes(user.uid)) {
-          isMember = true;
-        }
-      }
-
-      // ตรวจ 2: subcollection /classes/{classId}/members/{uid}
-      if (!isMember) {
-        const memberRef = adminDb
-          .collection("classes")
-          .doc(assignmentData.classId)
-          .collection("members")
-          .doc(user.uid);
-        const memberSnap = await memberRef.get();
-        if (memberSnap.exists) {
-          isMember = true;
-        }
-      }
-
-      // ตรวจ 3: user.classIds ใน Firestore /users/{uid}
-      if (!isMember) {
-        const userClassIds = user.classIds || [];
-        if (userClassIds.includes(assignmentData.classId)) {
-          isMember = true;
-        }
-      }
-
+      const isMember = await isUserMemberOfClass(user, assignmentData.classId);
       if (!isMember) {
         return { success: false, error: "คุณไม่มีสิทธิ์ทำแบบฝึกหัดนี้ (ไม่ได้อยู่ในห้องเรียนนี้)" };
       }

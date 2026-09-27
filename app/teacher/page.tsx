@@ -35,16 +35,22 @@ export default async function TeacherDashboardPage() {
 
     if (!snap.empty) {
       // ดึงข้อมูล classes เพื่อหาจำนวนนักเรียนจริงในแต่ละห้อง (BUG-11)
+      // ใช้ Set เก็บ UID นักเรียนเพื่อป้องกันการนับซ้ำระหว่าง classes.studentIds และ users.classIds
       const classesSnap = await adminDb.collection("classes").get();
-      const classStudentCountMap = new Map<string, number>();
+      const classStudentsMap = new Map<string, Set<string>>();
 
       classesSnap.docs.forEach((doc) => {
         const cData = doc.data();
-        const count = Array.isArray(cData.studentIds) ? cData.studentIds.length : 0;
-        classStudentCountMap.set(doc.id, count);
+        const set = new Set<string>();
+        if (Array.isArray(cData.studentIds)) {
+          cData.studentIds.forEach((uid: string) => {
+            if (uid) set.add(uid);
+          });
+        }
+        classStudentsMap.set(doc.id, set);
       });
 
-      // ถ้าใน class ไม่มี studentIds ให้ดึงจำนวนนักเรียนที่มี classIds สอดคล้อง
+      // รวมกับนักเรียนที่ระบุ classIds ใน /users (Set จะ deduplicate UID อัตโนมัติ)
       const allStudentsSnap = await adminDb
         .collection("users")
         .where("role", "==", "student")
@@ -54,7 +60,10 @@ export default async function TeacherDashboardPage() {
         const sData = sDoc.data();
         const cIds = (sData.classIds || []) as string[];
         cIds.forEach((cId) => {
-          classStudentCountMap.set(cId, (classStudentCountMap.get(cId) || 0) + 1);
+          if (!classStudentsMap.has(cId)) {
+            classStudentsMap.set(cId, new Set<string>());
+          }
+          classStudentsMap.get(cId)!.add(sDoc.id);
         });
       });
 
@@ -70,8 +79,8 @@ export default async function TeacherDashboardPage() {
           const d = doc.data();
           const classId = d.classId || "unknown";
 
-          // BUG-11: คำนวณจำนวนนักเรียนจริงของห้องนี้ (ไม่ใช่จำนวนนักเรียนทั้งโรงเรียน)
-          const totalStudentsInClass = classStudentCountMap.get(classId) || 1;
+          // BUG-11: คำนวณจำนวนนักเรียนจริงของห้องนี้ (Deduplicated UID)
+          const totalStudentsInClass = classStudentsMap.get(classId)?.size || 1;
 
           // Query Submissions สำหรับ assignment นี้
           const subsSnap = await adminDb

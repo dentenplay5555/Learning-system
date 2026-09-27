@@ -1,5 +1,5 @@
 import { adminDb } from "@/lib/firebase-admin";
-import { requireUser, canAccessTeacherArea } from "@/lib/auth";
+import { requireUser, isUserMemberOfClass } from "@/lib/auth";
 import { notFound, redirect } from "next/navigation";
 import QuizRunnerClient from "./QuizRunnerClient";
 
@@ -53,43 +53,9 @@ export default async function AssignmentDetailPage({
   }
 
   // BUG-03: ตรวจสอบ Class Membership ฝั่งนักเรียน — ป้องกันการแอบเปิดดูข้อสอบห้องอื่นผ่าน URL
-  if (!canAccessTeacherArea(user)) {
-    let isMember = false;
-
-    // ตรวจ 1: studentIds array ใน classes/{classId}
-    const classSnap = await adminDb.collection("classes").doc(assignment.classId).get();
-    if (classSnap.exists) {
-      const classData = classSnap.data();
-      if (Array.isArray(classData?.studentIds) && classData.studentIds.includes(user.uid)) {
-        isMember = true;
-      }
-    }
-
-    // ตรวจ 2: subcollection /classes/{classId}/members/{uid}
-    if (!isMember) {
-      const memberSnap = await adminDb
-        .collection("classes")
-        .doc(assignment.classId)
-        .collection("members")
-        .doc(user.uid)
-        .get();
-      if (memberSnap.exists) {
-        isMember = true;
-      }
-    }
-
-    // ตรวจ 3: user.classIds ใน Firestore /users/{uid}
-    if (!isMember) {
-      const userClassIds = user.classIds || [];
-      if (userClassIds.includes(assignment.classId)) {
-        isMember = true;
-      }
-    }
-
-    // หากนักเรียนไม่ได้อยู่ในห้องเรียนนี้ ไม่อนุญาตให้ดูข้อสอบ
-    if (!isMember) {
-      redirect("/dashboard");
-    }
+  const hasAccess = await isUserMemberOfClass(user, assignment.classId);
+  if (!hasAccess) {
+    redirect("/dashboard");
   }
 
   // เช็คว่าเคยส่งงานนี้ไปแล้วหรือยัง

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSessionUser, type SessionUser } from "./firebase-admin";
+import { getSessionUser, adminDb, type SessionUser } from "./firebase-admin";
 
 // ===================================================================
 // BUG-01: Auth helpers — ตรวจ Login + Role ที่เดียว ก่อน query database
@@ -54,4 +54,51 @@ export function isAdmin(user: SessionUser): boolean {
 /** Teacher หรือ Admin สามารถเข้า Teacher area ได้ */
 export function canAccessTeacherArea(user: SessionUser): boolean {
   return user.role === "teacher" || user.role === "admin";
+}
+
+// ===================================================================
+// BUG-03: Single Source of Truth สำหรับตรวจ Class Membership
+// ===================================================================
+
+/**
+ * ตรวจสอบว่าผู้ใช้มีสิทธิ์เข้าถึงหรือส่งงานในห้องเรียนนี้หรือไม่
+ * ตรวจสอบความถูกต้องจากฐานข้อมูลฝั่ง Server ครบทุกกรณี
+ */
+export async function isUserMemberOfClass(
+  user: SessionUser,
+  classId: string
+): Promise<boolean> {
+  if (!classId) return false;
+
+  // ครูและแอดมินสามารถเข้าถึงได้เสมอ
+  if (canAccessTeacherArea(user)) {
+    return true;
+  }
+
+  // 1. ตรวจ studentIds array ใน /classes/{classId}
+  const classDoc = await adminDb.collection("classes").doc(classId).get();
+  if (classDoc.exists) {
+    const classData = classDoc.data();
+    if (Array.isArray(classData?.studentIds) && classData.studentIds.includes(user.uid)) {
+      return true;
+    }
+  }
+
+  // 2. ตรวจ subcollection /classes/{classId}/members/{uid}
+  const memberDoc = await adminDb
+    .collection("classes")
+    .doc(classId)
+    .collection("members")
+    .doc(user.uid)
+    .get();
+  if (memberDoc.exists) {
+    return true;
+  }
+
+  // 3. ตรวจ user.classIds ใน Firestore /users/{uid}
+  if (user.classIds && user.classIds.includes(classId)) {
+    return true;
+  }
+
+  return false;
 }
