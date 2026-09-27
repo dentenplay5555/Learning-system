@@ -5,17 +5,17 @@ import { useRouter } from "next/navigation";
 import { signInWithPopup } from "firebase/auth";
 import { clientAuth, googleProvider } from "@/lib/firebase-client";
 import Spinner from "@/components/Spinner";
+import { useToast } from "@/components/Toast";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // การล็อกอินด้วย Google OAuth จริง
   const handleGoogleSignIn = async () => {
     try {
       setLoading(true);
-      setError(null);
 
       const result = await signInWithPopup(clientAuth, googleProvider);
       const idToken = await result.user.getIdToken();
@@ -32,6 +32,8 @@ export default function LoginPage() {
         throw new Error(data.error || "เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์");
       }
 
+      showToast(`ยินดีต้อนรับ ${data.user?.name || ""}`, "success");
+
       // นำทางตาม Role ที่ได้รับมาจาก Server
       if (data.user?.role === "teacher" || data.user?.role === "admin") {
         router.push("/teacher");
@@ -42,7 +44,7 @@ export default function LoginPage() {
     } catch (err: unknown) {
       console.error("Login failed:", err);
       const msg = err instanceof Error ? err.message : "ไม่สามารถเข้าสู่ระบบด้วย Google ได้";
-      setError(msg);
+      showToast(msg, "error");
     } finally {
       setLoading(false);
     }
@@ -66,12 +68,6 @@ export default function LoginPage() {
             ระบบกลางจัดการแบบฝึกหัดสำหรับนักเรียนและคุณครู
           </p>
         </div>
-
-        {error && (
-          <div className="mb-6 p-3 rounded-xl bg-red-950/40 border border-red-800/50 text-xs text-red-300">
-            ⚠️ {error}
-          </div>
-        )}
 
         <div className="space-y-4">
           {/* Main Google Sign-in Button */}

@@ -37,6 +37,12 @@ export async function submitAssignmentAction(
   const submissionId = `${assignmentId}_${user.uid}`;
 
   try {
+    // 0. กันการส่งซ้ำ: ถ้ามี submission ของ id นี้อยู่แล้ว ห้ามตรวจซ้ำ/เขียนทับคะแนนเดิม
+    const existingSubmission = await adminDb.collection("submissions").doc(submissionId).get();
+    if (existingSubmission.exists) {
+      return { success: false, error: "คุณส่งคำตอบของแบบฝึกหัดนี้ไปแล้ว ไม่สามารถส่งซ้ำได้" };
+    }
+
     // 1. ดึงข้อมูลโจทย์เพื่อเช็คเวลาส่งงาน (Deadline Check)
     const assignmentDoc = await adminDb.collection("assignments").doc(assignmentId).get();
     

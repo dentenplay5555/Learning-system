@@ -4,6 +4,7 @@ import "./globals.css";
 import { getSessionUser } from "@/lib/firebase-admin";
 import { logoutAction } from "@/lib/actions";
 import PageTransition from "@/components/PageTransition";
+import { ToastProvider } from "@/components/Toast";
 
 export const metadata: Metadata = {
   title: "Practice Hub — ระบบจัดการแบบฝึกหัดและติดตามผลการเรียน",
@@ -24,6 +25,7 @@ export default async function RootLayout({
         <div className="fixed inset-0 pointer-events-none glow-gradient z-0"></div>
         <div className="fixed inset-0 pointer-events-none glow-accent z-0"></div>
 
+        <ToastProvider>
         {/* Global Navigation Header */}
         <header className="sticky top-0 z-50 glass-panel border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -109,6 +111,7 @@ export default async function RootLayout({
             </div>
           </div>
         </footer>
+        </ToastProvider>
       </body>
     </html>
   );

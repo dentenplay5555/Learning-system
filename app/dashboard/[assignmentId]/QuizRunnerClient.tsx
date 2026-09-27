@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { submitAssignmentAction } from "@/lib/actions";
 import Spinner from "@/components/Spinner";
+import { useToast } from "@/components/Toast";
 
 interface Question {
   id: string;
@@ -25,18 +26,22 @@ interface Assignment {
 export default function QuizRunnerClient({
   assignment,
   studentName,
+  existingSubmission,
 }: {
   assignment: Assignment;
   studentName: string;
+  existingSubmission?: { score: number; maxScore: number; submissionId: string } | null;
 }) {
+  const { showToast } = useToast();
   const [answers, setAnswers] = useState<Record<string, string | number>>({});
   const [submitting, setSubmitting] = useState(false);
+  // ถ้ามี existingSubmission ส่งมาจาก server (แปลว่าเคยส่งคำตอบไปแล้ว)
+  // ให้เริ่มต้นที่หน้าผลคะแนนทันที แทนที่จะโชว์แบบฝึกหัดให้ทำใหม่
   const [result, setResult] = useState<{
     score: number;
     maxScore: number;
     submissionId: string;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  } | null>(existingSubmission ?? null);
 
   const questions = assignment.questions || [];
   const answeredCount = Object.keys(answers).length;
@@ -58,7 +63,6 @@ export default function QuizRunnerClient({
 
     try {
       setSubmitting(true);
-      setError(null);
 
       // เรียก Server Action เพื่อให้ Server ทำการตรวจเทียบคำตอบกับ /answerKeys ป้องกันการแอบดูเฉลย
       const res = await submitAssignmentAction(assignment.id, answers);
@@ -67,6 +71,7 @@ export default function QuizRunnerClient({
         throw new Error(res.error || "เกิดข้อผิดพลาดในการส่งงาน");
       }
 
+      showToast("ส่งคำตอบและตรวจคะแนนสำเร็จ", "success");
       setResult({
         score: res.score ?? 0,
         maxScore: res.maxScore ?? assignment.maxScore,
@@ -75,7 +80,7 @@ export default function QuizRunnerClient({
     } catch (err: unknown) {
       console.error(err);
       const msg = err instanceof Error ? err.message : "ไม่สามารถส่งงานได้";
-      setError(msg);
+      showToast(msg, "error");
     } finally {
       setSubmitting(false);
     }
@@ -163,12 +168,6 @@ export default function QuizRunnerClient({
           </div>
         </div>
       </div>
-
-      {error && (
-        <div className="p-4 rounded-2xl bg-red-950/40 border border-red-800/50 text-xs text-red-300">
-          ⚠️ {error}
-        </div>
-      )}
 
       {/* Questions List */}
       <div className="space-y-6">

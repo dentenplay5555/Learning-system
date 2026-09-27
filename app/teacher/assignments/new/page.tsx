@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createAssignmentAction } from "@/lib/actions";
 import Spinner from "@/components/Spinner";
+import { useToast } from "@/components/Toast";
 
 interface QuestionInput {
   id: string;
@@ -17,8 +18,8 @@ interface QuestionInput {
 
 export default function NewAssignmentPage() {
   const router = useRouter();
+  const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -77,13 +78,12 @@ export default function NewAssignmentPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
-      setError("กรุณากรอกชื่อแบบฝึกหัด");
+      showToast("กรุณากรอกชื่อแบบฝึกหัด", "error");
       return;
     }
 
     try {
       setLoading(true);
-      setError(null);
 
       // เรียก Server Action ซึ่งจะแยก questions กับ answerKeys เก็บคนละ collection
       const res = await createAssignmentAction({
@@ -98,12 +98,13 @@ export default function NewAssignmentPage() {
         throw new Error(res.error || "ไม่สามารถสร้างแบบฝึกหัดได้");
       }
 
+      showToast("สร้างแบบฝึกหัดสำเร็จ", "success");
       router.push("/teacher");
       router.refresh();
     } catch (err: unknown) {
       console.error(err);
       const msg = err instanceof Error ? err.message : "เกิดข้อผิดพลาดในการบันทึก";
-      setError(msg);
+      showToast(msg, "error");
     } finally {
       setLoading(false);
     }
@@ -135,12 +136,6 @@ export default function NewAssignmentPage() {
             ระบบจะแยกคำตอบที่ถูกต้อง (Answer Key) ไปเก็บในคอลเลกชันความปลอดภัยสูงโดยอัตโนมัติ
           </p>
         </div>
-
-        {error && (
-          <div className="p-4 rounded-2xl bg-red-950/40 border border-red-800/50 text-xs text-red-300">
-            ⚠️ {error}
-          </div>
-        )}
 
         {/* Basic Details Section */}
         <div className="glass-panel rounded-3xl p-6 sm:p-8 space-y-4">
