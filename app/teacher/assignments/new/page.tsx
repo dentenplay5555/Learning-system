@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createAssignmentAction } from "@/lib/actions";
+import { getDefaultDueDateTimeLocal } from "@/lib/date";
 import Spinner from "@/components/Spinner";
 import { useToast } from "@/components/Toast";
 
@@ -24,7 +25,9 @@ export default function NewAssignmentPage() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [classId, setClassId] = useState("class-m4-1");
-  const [dueAt, setDueAt] = useState("2026-10-15T23:59");
+
+  // BUG-10: Due Date Dynamic — กำหนดค่าเริ่มต้นเป็น 7 วันข้างหน้าเวลา 23:59 ในเขตเวลาไทย
+  const [dueAt, setDueAt] = useState(() => getDefaultDueDateTimeLocal());
 
   const [questions, setQuestions] = useState<QuestionInput[]>([
     {
@@ -39,10 +42,12 @@ export default function NewAssignmentPage() {
 
   const handleAddQuestion = () => {
     const nextIndex = questions.length + 1;
+    // BUG-08: สุ่ม ID ไม่ให้ซ้ำกัน
+    const uniqueId = `q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     setQuestions((prev) => [
       ...prev,
       {
-        id: `q${Date.now()}`,
+        id: uniqueId,
         type: "multiple_choice",
         prompt: `คำถามข้อที่ ${nextIndex}`,
         options: ["ตัวเลือก A", "ตัวเลือก B", "ตัวเลือก C", "ตัวเลือก D"],
@@ -61,6 +66,29 @@ export default function NewAssignmentPage() {
     setQuestions((prev) => {
       const copy = [...prev];
       copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+  };
+
+  // BUG-14: สลับประเภทข้อสอบ (multiple_choice <-> true_false)
+  const handleTypeChange = (index: number, newType: "multiple_choice" | "true_false") => {
+    setQuestions((prev) => {
+      const copy = [...prev];
+      if (newType === "true_false") {
+        copy[index] = {
+          ...copy[index],
+          type: "true_false",
+          options: ["ถูก (True)", "ผิด (False)"],
+          correctAnswer: 0,
+        };
+      } else {
+        copy[index] = {
+          ...copy[index],
+          type: "multiple_choice",
+          options: ["ตัวเลือก A", "ตัวเลือก B", "ตัวเลือก C", "ตัวเลือก D"],
+          correctAnswer: 0,
+        };
+      }
       return copy;
     });
   };
@@ -182,6 +210,7 @@ export default function NewAssignmentPage() {
               <label className="text-xs font-semibold text-slate-300">วันและเวลาครบกำหนดส่ง (Due Date)</label>
               <input
                 type="datetime-local"
+                required
                 value={dueAt}
                 onChange={(e) => setDueAt(e.target.value)}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-sm text-white focus:outline-none focus:border-cyan-500"
@@ -210,10 +239,38 @@ export default function NewAssignmentPage() {
               key={q.id}
               className="glass-panel rounded-3xl p-6 sm:p-8 space-y-4 relative border-l-4 border-l-cyan-500"
             >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-cyan-400 bg-cyan-950/60 px-3 py-1 rounded-lg border border-cyan-800/40">
-                  ข้อที่ {qIndex + 1}
-                </span>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-cyan-400 bg-cyan-950/60 px-3 py-1 rounded-lg border border-cyan-800/40">
+                    ข้อที่ {qIndex + 1}
+                  </span>
+
+                  {/* BUG-14: สลับระหว่าง ปรนัย (4 ตัวเลือก) และ ถูก/ผิด */}
+                  <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg p-0.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => handleTypeChange(qIndex, "multiple_choice")}
+                      className={`px-2.5 py-1 rounded-md transition-colors ${
+                        q.type === "multiple_choice"
+                          ? "bg-cyan-600 text-white font-semibold"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      ปรนัย (4 ตัวเลือก)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTypeChange(qIndex, "true_false")}
+                      className={`px-2.5 py-1 rounded-md transition-colors ${
+                        q.type === "true_false"
+                          ? "bg-cyan-600 text-white font-semibold"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      ถูก / ผิด (True/False)
+                    </button>
+                  </div>
+                </div>
 
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-1.5 text-xs text-slate-300">

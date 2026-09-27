@@ -1,17 +1,14 @@
 import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import Link from "next/link";
-import { getSessionUser, adminDb, isFirebaseAdminConfigured } from "@/lib/firebase-admin";
-import { redirect } from "next/navigation";
+import { adminDb } from "@/lib/firebase-admin";
+import { requireTeacher } from "@/lib/auth";
+import { formatBangkokDate } from "@/lib/date";
 
 export default async function TeacherDashboardPage() {
-  const user = await getSessionUser();
+  // BUG-01: ตรวจสิทธิ์ครูหรือแอดมินก่อนเข้าถึงข้อมูล
+  const user = await requireTeacher();
 
-  if (!user) {
-    redirect("/login");
-  }
-
-  // ดึง assignments จาก Firestore พร้อมสถิติการส่งงานจริงจาก /submissions
-  // ไม่มี mock fallback อีกต่อไป — ถ้ายังไม่มีข้อมูลจริง ให้แสดง empty state แทน
+  // BUG-02: Data Isolation — ครูเห็นเฉพาะ Assignment ของตัวเอง (Admin เห็นทั้งหมด)
   let assignments: Array<{
     id: string;
     title: string;
@@ -23,68 +20,133 @@ export default async function TeacherDashboardPage() {
     dueAt: string;
     status: string;
   }> = [];
+
+  let totalEarnedScore = 0;
+  let totalMaxScorePossible = 0;
+  let totalUniqueSubmissions = 0;
+  let totalClassMembersPossible = 0;
+
   try {
-    if (isFirebaseAdminConfigured) {
-      const snap = await adminDb.collection("assignments").limit(20).get();
-      if (!snap.empty) {
-        // จำนวนนักเรียนทั้งหมด: นับจาก /users ที่ role === "student"
-        // (หมายเหตุ: โค้ดปัจจุบันยังไม่มีการผูก classId เข้ากับนักเรียนจริง
-        // จึงใช้จำนวนนักเรียนทั้งหมดในระบบเป็นตัวเทียบแทนจำนวนต่อห้อง)
-        const studentsSnap = await adminDb.collection("users").where("role", "==", "student").get();
-        const totalStudents = studentsSnap.size || 1;
+    const assignmentsCollection = adminDb.collection("assignments");
+    const snap =
+      user.role === "admin"
+        ? await assignmentsCollection.limit(50).get()
+        : await assignmentsCollection.where("teacherId", "==", user.uid).limit(50).get();
 
-        assignments = await Promise.all(
-          snap.docs.map(async (doc: QueryDocumentSnapshot) => {
-            const d = doc.data();
+    if (!snap.empty) {
+      // ดึงข้อมูล classes เพื่อหาจำนวนนักเรียนจริงในแต่ละห้อง (BUG-11)
+      const classesSnap = await adminDb.collection("classes").get();
+      const classStudentCountMap = new Map<string, number>();
 
-            // Query จริงจาก /submissions ที่ assignmentId ตรงกับข้อสอบนี้
-            const subsSnap = await adminDb
-              .collection("submissions")
-              .where("assignmentId", "==", doc.id)
-              .get();
+      classesSnap.docs.forEach((doc) => {
+        const cData = doc.data();
+        const count = Array.isArray(cData.studentIds) ? cData.studentIds.length : 0;
+        classStudentCountMap.set(doc.id, count);
+      });
 
-            const scores = subsSnap.docs
-              .map((s) => s.data().score)
-              .filter((s): s is number => typeof s === "number");
+      // ถ้าใน class ไม่มี studentIds ให้ดึงจำนวนนักเรียนที่มี classIds สอดคล้อง
+      const allStudentsSnap = await adminDb
+        .collection("users")
+        .where("role", "==", "student")
+        .get();
 
-            const submissionsCount = subsSnap.size;
-            const avgScore =
-              scores.length > 0
-                ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
-                : 0;
+      allStudentsSnap.docs.forEach((sDoc) => {
+        const sData = sDoc.data();
+        const cIds = (sData.classIds || []) as string[];
+        cIds.forEach((cId) => {
+          classStudentCountMap.set(cId, (classStudentCountMap.get(cId) || 0) + 1);
+        });
+      });
 
-            return {
+      // เรียงลำดับ createdAt descending
+      const sortedDocs = snap.docs.sort((a, b) => {
+        const aTime = a.data().createdAt?._seconds || 0;
+        const bTime = b.data().createdAt?._seconds || 0;
+        return bTime - aTime;
+      });
+
+      const results = await Promise.all(
+        sortedDocs.map(async (doc: QueryDocumentSnapshot) => {
+          const d = doc.data();
+          const classId = d.classId || "unknown";
+
+          // BUG-11: คำนวณจำนวนนักเรียนจริงของห้องนี้ (ไม่ใช่จำนวนนักเรียนทั้งโรงเรียน)
+          const totalStudentsInClass = classStudentCountMap.get(classId) || 1;
+
+          // Query Submissions สำหรับ assignment นี้
+          const subsSnap = await adminDb
+            .collection("submissions")
+            .where("assignmentId", "==", doc.id)
+            .get();
+
+          const studentIdSet = new Set<string>();
+          const scores: number[] = [];
+          const maxScore = d.maxScore || 30;
+          let earnedInAssignment = 0;
+          let maxPossibleInAssignment = 0;
+
+          subsSnap.docs.forEach((s) => {
+            const sData = s.data();
+            if (sData.studentId) studentIdSet.add(sData.studentId);
+            if (typeof sData.score === "number") {
+              scores.push(sData.score);
+              earnedInAssignment += sData.score;
+              maxPossibleInAssignment += sData.maxScore || maxScore;
+            }
+          });
+
+          const uniqueSubmitted = studentIdSet.size;
+
+          const avgScore =
+            scores.length > 0
+              ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
+              : 0;
+
+          return {
+            assignment: {
               id: doc.id,
               title: d.title || "แบบฝึกหัด",
-              classId: d.classId || "ห้องเรียน",
-              submissionsCount,
-              totalStudents,
+              classId,
+              submissionsCount: uniqueSubmitted,
+              totalStudents: totalStudentsInClass,
               avgScore,
-              maxScore: d.maxScore || 30,
-              dueAt: d.dueAt?.toDate ? d.dueAt.toDate().toISOString().split("T")[0] : "2026-10-10",
+              maxScore,
+              // BUG-09: แปลงเวลาแสดงผลในโซนไทย Asia/Bangkok
+              dueAt: formatBangkokDate(d.dueAt),
               status: "active",
-            };
-          })
-        );
-      }
+            },
+            uniqueSubmitted,
+            totalStudentsInClass,
+            earnedInAssignment,
+            maxPossibleInAssignment,
+          };
+        })
+      );
+
+      assignments = results.map((r) => r.assignment);
+      totalUniqueSubmissions = results.reduce((acc, r) => acc + r.uniqueSubmitted, 0);
+      totalClassMembersPossible = results.reduce((acc, r) => acc + r.totalStudentsInClass, 0);
+      totalEarnedScore = results.reduce((acc, r) => acc + r.earnedInAssignment, 0);
+      totalMaxScorePossible = results.reduce((acc, r) => acc + r.maxPossibleInAssignment, 0);
     }
   } catch (err) {
     console.error("Fetch teacher assignments error:", err);
   }
 
-  // สรุปตัวเลขรวมจริงจาก assignments ที่ query ได้ (ใช้แทนตัวเลข hardcode ใน Metrics Row)
-  const totalSubmissions = assignments.reduce((acc, a) => acc + a.submissionsCount, 0);
-  const totalPossible = assignments.reduce((acc, a) => acc + a.totalStudents, 0) || 1;
-  const submissionRate = Math.round((totalSubmissions / totalPossible) * 1000) / 10;
-  const scoredAssignments = assignments.filter((a) => a.submissionsCount > 0);
-  const overallAvgPercent =
-    scoredAssignments.length > 0
-      ? Math.round(
-          (scoredAssignments.reduce((acc, a) => acc + a.avgScore / (a.maxScore || 1), 0) /
-            scoredAssignments.length) *
-            1000
-        ) / 10
+  // BUG-11: คำนวณ Submission Rate ตามจำนวนสมาชิกห้องจริง
+  const submissionRate =
+    totalClassMembersPossible > 0
+      ? Math.round((totalUniqueSubmissions / totalClassMembersPossible) * 1000) / 10
       : 0;
+
+  // BUG-12: คำนวณ Average Score แบบถ่วงน้ำหนักรวมจริงจากทุก submission (ไม่ใช่ค่าเฉลี่ยของค่าเฉลี่ย)
+  const overallAvgPercent =
+    totalMaxScorePossible > 0
+      ? Math.round((totalEarnedScore / totalMaxScorePossible) * 1000) / 10
+      : 0;
+
+  // BUG-13: คำนวณจำนวนห้องเรียนจริงจาก Assignment ที่ดูแล (แทนตัวเลข hardcode)
+  const distinctClasses = new Set(assignments.map((a) => a.classId)).size;
 
   return (
     <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -93,7 +155,7 @@ export default async function TeacherDashboardPage() {
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="px-3 py-1 rounded-full text-xs font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-              👨‍🏫 Teacher Management Dashboard
+              {user.role === "admin" ? "🛡️ Admin Dashboard" : "👨‍🏫 Teacher Management Dashboard"}
             </span>
             <span className="text-xs text-slate-400">กลุ่มสาระการเรียนรู้</span>
           </div>
@@ -116,28 +178,30 @@ export default async function TeacherDashboardPage() {
         </div>
       </div>
 
-      {/* Metrics Row */}
+      {/* Metrics Row — BUG-13: ใช้ข้อมูลคำนวณจริงทั้งหมด */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="glass-panel p-5 rounded-2xl space-y-1">
           <div className="text-xs text-slate-400 font-medium">แบบฝึกหัดทั้งหมด</div>
           <div className="text-2xl font-bold text-white">{assignments.length} งาน</div>
-          <div className="text-[11px] text-cyan-400">2 ห้องเรียนที่ดูแล</div>
+          <div className="text-[11px] text-cyan-400">{distinctClasses} ห้องเรียนที่ดูแล</div>
         </div>
         <div className="glass-panel p-5 rounded-2xl space-y-1">
           <div className="text-xs text-slate-400 font-medium">นักเรียนส่งงานแล้ว</div>
-          <div className="text-2xl font-bold text-emerald-400">{totalSubmissions} ครั้ง</div>
-          <div className="text-[11px] text-emerald-300">ตรวจอัตโนมัติ 100%</div>
+          <div className="text-2xl font-bold text-emerald-400">{totalUniqueSubmissions} คน</div>
+          <div className="text-[11px] text-emerald-300">
+            จากทั้งหมด {totalClassMembersPossible} สิทธิ์
+          </div>
         </div>
         <div className="glass-panel p-5 rounded-2xl space-y-1">
           <div className="text-xs text-slate-400 font-medium">อัตราการส่งงาน</div>
           <div className="text-2xl font-bold text-indigo-400">{submissionRate}%</div>
-          <div className="text-[11px] text-indigo-300">คำนวณจากข้อมูลจริงใน /submissions</div>
+          <div className="text-[11px] text-indigo-300">คำนวณตามสมาชิกในห้องเรียนจริง</div>
         </div>
         <div className="glass-panel p-5 rounded-2xl space-y-1">
           <div className="text-xs text-slate-400 font-medium">คะแนนเฉลี่ยรวม</div>
           <div className="text-2xl font-bold text-amber-400">{overallAvgPercent}%</div>
           <div className="text-[11px] text-amber-300">
-            {scoredAssignments.length > 0 ? "จากงานที่มีคนส่งแล้ว" : "ยังไม่มีการส่งงาน"}
+            {totalUniqueSubmissions > 0 ? "คิดคะแนนจากทุกการส่งงาน" : "ยังไม่มีการส่งงาน"}
           </div>
         </div>
       </div>
@@ -167,66 +231,75 @@ export default async function TeacherDashboardPage() {
           <div className="text-center py-14 space-y-2">
             <div className="text-3xl">📋</div>
             <p className="text-sm text-slate-300 font-semibold">ยังไม่มีแบบฝึกหัดที่สร้างไว้</p>
-            <p className="text-xs text-slate-500">กด &quot;+ สร้างแบบฝึกหัดใหม่&quot; ด้านบนเพื่อเริ่มต้น</p>
+            <p className="text-xs text-slate-500">
+              กด &quot;+ สร้างแบบฝึกหัดใหม่&quot; ด้านบนเพื่อเริ่มต้น
+            </p>
           </div>
         ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase">
-                <th className="py-3 px-4">ชื่อแบบฝึกหัด</th>
-                <th className="py-3 px-4">ห้องเรียน</th>
-                <th className="py-3 px-4">สถานะส่งงาน</th>
-                <th className="py-3 px-4">คะแนนเฉลี่ย</th>
-                <th className="py-3 px-4">กำหนดส่ง</th>
-                <th className="py-3 px-4 text-right">การจัดการ</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {assignments.map((item) => (
-                <tr key={item.id} className="hover:bg-slate-900/40 transition-colors">
-                  <td className="py-4 px-4 font-semibold text-slate-100">
-                    {item.title}
-                  </td>
-                  <td className="py-4 px-4 text-xs text-slate-300">
-                    <span className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700">
-                      {item.classId}
-                    </span>
-                  </td>
-                  <td className="py-4 px-4 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-emerald-400 font-semibold">
-                        {item.submissionsCount}/{item.totalStudents} คน
-                      </span>
-                      <div className="w-16 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                        <div
-                          className="h-full bg-emerald-400"
-                          style={{
-                            width: `${(item.submissionsCount / item.totalStudents) * 100}%`,
-                          }}
-                        ></div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-4 px-4 text-xs font-medium text-slate-200">
-                    {item.avgScore} / {item.maxScore}
-                  </td>
-                  <td className="py-4 px-4 text-xs text-slate-400">
-                    {item.dueAt}
-                  </td>
-                  <td className="py-4 px-4 text-right">
-                    <Link
-                      href={`/dashboard/${item.id}`}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors"
-                    >
-                      ดูข้อสอบ
-                    </Link>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                  <th className="py-3 px-4">ชื่อแบบฝึกหัด</th>
+                  <th className="py-3 px-4">ห้องเรียน</th>
+                  <th className="py-3 px-4">สถานะส่งงาน</th>
+                  <th className="py-3 px-4">คะแนนเฉลี่ย</th>
+                  <th className="py-3 px-4">กำหนดส่ง</th>
+                  <th className="py-3 px-4 text-right">การจัดการ</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60">
+                {assignments.map((item) => {
+                  const percentSubmitted =
+                    item.totalStudents > 0
+                      ? Math.min(100, Math.round((item.submissionsCount / item.totalStudents) * 100))
+                      : 0;
+
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-900/40 transition-colors">
+                      <td className="py-4 px-4 font-semibold text-slate-100">
+                        {item.title}
+                      </td>
+                      <td className="py-4 px-4 text-xs text-slate-300">
+                        <span className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700">
+                          {item.classId}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400 font-semibold">
+                            {item.submissionsCount}/{item.totalStudents} คน
+                          </span>
+                          <div className="w-16 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                            <div
+                              className="h-full bg-emerald-400"
+                              style={{
+                                width: `${percentSubmitted}%`,
+                              }}
+                            ></div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-4 px-4 text-xs font-medium text-slate-200">
+                        {item.avgScore} / {item.maxScore}
+                      </td>
+                      <td className="py-4 px-4 text-xs text-slate-400">
+                        {item.dueAt}
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <Link
+                          href={`/dashboard/${item.id}`}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 transition-colors"
+                        >
+                          ดูข้อสอบ
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

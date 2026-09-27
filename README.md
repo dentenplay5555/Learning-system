@@ -310,7 +310,7 @@ Firebase CLI: Deploy Rules (รันเมื่อมีการปรับ 
 
 | MVP (ทำก่อน) | Phase 2 |
 |---|---|
-| Google OAuth login (จำกัด domain โรงเรียน) + Session Cookie | ระบบ Auto-grading พร้อม Feedback ละเอียดรายข้อ |
+| Google OAuth login (จำกัด domain โรงเรียนได้หากต้องการ) + Session Cookie | ระบบ Auto-grading พร้อม Feedback ละเอียดรายข้อ |
 | Firestore schema พื้นฐาน (users/classes/assignments/submissions) | Analytics เชิงลึก (วิเคราะห์ข้อสอบยาก-ง่าย) |
 | Teacher สร้าง assignment แบบเลือกตอบ (Multiple Choice / True-False) | Notification แจ้งเตือนงานใกล้ครบกำหนดผ่าน Line/Email |
 | Student ดูรายการงานที่ต้องทำ + ทำข้อสอบ + ส่งคำตอบ | Gamification (Badges / Streak / Leaderboard) |

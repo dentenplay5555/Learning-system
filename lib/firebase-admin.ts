@@ -1,30 +1,29 @@
+// ===================================================================
+// BUG-04: Fail-open → ใช้ getRequiredEnv ห้าม fallback
+// BUG-16: Dummy Config → ไม่มี dummy fallback อีกต่อไป
+// ===================================================================
+
 import { getApps, initializeApp, cert } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { cookies } from "next/headers";
+import { getRequiredEnv } from "@/lib/env";
 
-const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID;
-const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
-const rawPrivateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
-const privateKey = rawPrivateKey?.replace(/\\n/g, "\n");
-
-export const isFirebaseAdminConfigured = Boolean(projectId && clientEmail && privateKey);
+// Required config — จะ throw ถ้าหายไป (BUG-04, BUG-16)
+const projectId = getRequiredEnv("FIREBASE_ADMIN_PROJECT_ID");
+const clientEmail = getRequiredEnv("FIREBASE_ADMIN_CLIENT_EMAIL");
+const rawPrivateKey = getRequiredEnv("FIREBASE_ADMIN_PRIVATE_KEY");
+const privateKey = rawPrivateKey.replace(/\\n/g, "\n");
 
 const apps = getApps();
 const app = !apps.length
-  ? initializeApp(
-      isFirebaseAdminConfigured
-        ? {
-            credential: cert({
-              projectId,
-              clientEmail,
-              privateKey,
-            }),
-          }
-        : {
-            projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "practice-hub",
-          }
-    )
+  ? initializeApp({
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey,
+      }),
+    })
   : apps[0];
 
 export const adminAuth = getAuth(app);

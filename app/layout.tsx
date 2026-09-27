@@ -68,7 +68,11 @@ export default async function RootLayout({
                   <div className="hidden sm:flex flex-col text-right">
                     <span className="text-xs font-semibold text-slate-200">{user.name}</span>
                     <span className="text-[10px] text-slate-400">
-                      {user.role === "teacher" ? "👨‍🏫 ครูผู้สอน" : "👨‍🎓 นักเรียน"}
+                      {user.role === "admin"
+                        ? "🛡️ ผู้ดูแลระบบ"
+                        : user.role === "teacher"
+                        ? "👨‍🏫 ครูผู้สอน"
+                        : "👨‍🎓 นักเรียน"}
                     </span>
                   </div>
                   <form action={logoutAction}>

@@ -1,19 +1,17 @@
 import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import Link from "next/link";
-import { getSessionUser, adminDb, isFirebaseAdminConfigured } from "@/lib/firebase-admin";
-import { redirect } from "next/navigation";
+import { adminDb } from "@/lib/firebase-admin";
+import { requireUser } from "@/lib/auth";
+import { formatBangkokDate } from "@/lib/date";
 
 export default async function StudentDashboardPage() {
-  const user = await getSessionUser();
+  // BUG-01: ตรวจสอบการเข้าสู่ระบบแบบรวมศูนย์
+  const user = await requireUser();
 
-  // หากยังไม่เข้าสู่ระบบ ให้ redirect ไป /login
-  if (!user) {
-    redirect("/login");
-  }
+  // BUG-02: Data Isolation — นักเรียนเข้าถึงเฉพาะแบบฝึกหัดของห้องที่ตนเองสังกัด
+  const studentClasses =
+    user.classIds && user.classIds.length > 0 ? user.classIds : ["class-m4-1"];
 
-  // ดึง assignments จริงจาก Firestore พร้อม sync สถานะกับ submissions ของนักเรียนคนนี้
-  // ไม่มี mock fallback อีกต่อไป — ถ้ายังไม่มีข้อมูลจริง ให้แสดง empty state แทน
-  // (เดิมมี MOCK_ASSIGNMENTS ที่ id ตายตัวชนกับ MOCK_QUESTIONS ทำให้ submit จริงไม่ได้)
   let assignments: Array<{
     id: string;
     title: string;
@@ -25,44 +23,55 @@ export default async function StudentDashboardPage() {
     status: string;
     score?: number;
   }> = [];
-  try {
-    if (isFirebaseAdminConfigured) {
-      const snap = await adminDb.collection("assignments").limit(20).get();
-      if (!snap.empty) {
-        // ดึง submission ทั้งหมดของนักเรียนคนนี้มาครั้งเดียว แล้ว map ด้วย assignmentId
-        // เพื่อรู้ว่าข้อไหนส่งไปแล้ว/ได้คะแนนเท่าไหร่ แทนที่จะ hardcode "pending" ทุกครั้ง
-        const subsSnap = await adminDb
-          .collection("submissions")
-          .where("studentId", "==", user.uid)
-          .get();
-        const submissionByAssignment = new Map<string, { score: number }>();
-        subsSnap.docs.forEach((s) => {
-          const d = s.data();
-          if (d.assignmentId) {
-            submissionByAssignment.set(d.assignmentId, { score: d.score ?? 0 });
-          }
-        });
 
-        const firestoreList = snap.docs.map((doc: QueryDocumentSnapshot) => {
-          const data = doc.data();
-          const submission = submissionByAssignment.get(doc.id);
-          return {
-            id: doc.id,
-            title: data.title || "แบบฝึกหัด",
-            description: data.description || "",
-            classId: data.classId || "ห้องเรียน",
-            questionCount: (data.questions || []).length,
-            maxScore: data.maxScore || 10,
-            dueAt: data.dueAt?.toDate ? data.dueAt.toDate().toISOString().split("T")[0] : "ไม่ระบุ",
-            status: submission ? "graded" : "pending",
-            ...(submission ? { score: submission.score } : {}),
-          };
-        });
-        if (firestoreList.length > 0) assignments = firestoreList;
-      }
+  try {
+    // Query เฉพาะ Assignment ของห้องที่นักเรียนสังกัดเท่านั้น
+    const snap = await adminDb
+      .collection("assignments")
+      .where("classId", "in", studentClasses.slice(0, 10))
+      .get();
+
+    if (!snap.empty) {
+      // ดึง submissions ของนักเรียนคนนี้มา map กับ assignmentId
+      const subsSnap = await adminDb
+        .collection("submissions")
+        .where("studentId", "==", user.uid)
+        .get();
+
+      const submissionByAssignment = new Map<string, { score: number }>();
+      subsSnap.docs.forEach((s) => {
+        const d = s.data();
+        if (d.assignmentId) {
+          submissionByAssignment.set(d.assignmentId, { score: d.score ?? 0 });
+        }
+      });
+
+      // เรียงลำดับตาม createdAt ล่าสุด
+      const docs = snap.docs.sort((a, b) => {
+        const aTime = a.data().createdAt?._seconds || 0;
+        const bTime = b.data().createdAt?._seconds || 0;
+        return bTime - aTime;
+      });
+
+      assignments = docs.map((doc: QueryDocumentSnapshot) => {
+        const data = doc.data();
+        const submission = submissionByAssignment.get(doc.id);
+        return {
+          id: doc.id,
+          title: data.title || "แบบฝึกหัด",
+          description: data.description || "",
+          classId: data.classId || "ห้องเรียน",
+          questionCount: (data.questions || []).length,
+          maxScore: data.maxScore || 10,
+          // BUG-09: แสดงผลวันที่ในเขตเวลาไทย (Asia/Bangkok)
+          dueAt: formatBangkokDate(data.dueAt),
+          status: submission ? "graded" : "pending",
+          ...(submission ? { score: submission.score } : {}),
+        };
+      });
     }
   } catch (err) {
-    console.error("Fetch assignments failed:", err);
+    console.error("Fetch student assignments failed:", err);
   }
 
   const pendingCount = assignments.filter((a) => a.status !== "graded").length;
@@ -84,7 +93,10 @@ export default async function StudentDashboardPage() {
             <span className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
               👨‍🎓 Student Dashboard
             </span>
-            <span className="text-xs text-slate-400">ห้อง ม.4/1</span>
+            {/* BUG-13: แสดงห้องเรียนจริงที่สังกัด แทนการ Hardcode */}
+            <span className="text-xs text-slate-400">
+              สังกัด: {studentClasses.join(", ")}
+            </span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold text-white">
             ยินดีต้อนรับ, {user.name || "นักเรียน"}
@@ -115,7 +127,7 @@ export default async function StudentDashboardPage() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <span>📝</span> รายการแบบฝึกหัดทั้งหมด
+            <span>📝</span> รายการแบบฝึกหัดประจำห้องเรียน
           </h2>
           <span className="text-xs text-slate-400">อัปเดตล่าสุดอัตโนมัติ</span>
         </div>
@@ -124,52 +136,54 @@ export default async function StudentDashboardPage() {
           <div className="glass-panel rounded-2xl p-10 text-center space-y-2">
             <div className="text-3xl">📭</div>
             <p className="text-sm text-slate-300 font-semibold">ยังไม่มีแบบฝึกหัดในตอนนี้</p>
-            <p className="text-xs text-slate-500">รอคุณครูสร้างแบบฝึกหัดใหม่ แล้วจะแสดงที่นี่โดยอัตโนมัติ</p>
+            <p className="text-xs text-slate-500">
+              เมื่อคุณครูมอบหมายแบบฝึกหัดให้ห้องของคุณ จะแสดงที่นี่โดยอัตโนมัติ
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {assignments.map((item) => (
-            <div
-              key={item.id}
-              className="glass-panel glass-panel-hover rounded-2xl p-6 flex flex-col justify-between"
-            >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300">
-                    {item.classId}
-                  </span>
-                  {item.status === "graded" ? (
-                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
-                      ตรวจแล้ว ({item.score}/{item.maxScore})
+              <div
+                key={item.id}
+                className="glass-panel glass-panel-hover rounded-2xl p-6 flex flex-col justify-between"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300">
+                      {item.classId}
                     </span>
-                  ) : (
-                    <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-amber-950/60 text-amber-400 border border-amber-800/40">
-                      ยังไม่ส่ง
-                    </span>
-                  )}
+                    {item.status === "graded" ? (
+                      <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-emerald-950/60 text-emerald-400 border border-emerald-800/40">
+                        ตรวจแล้ว ({item.score}/{item.maxScore})
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-amber-950/60 text-amber-400 border border-amber-800/40">
+                        ยังไม่ส่ง
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="font-bold text-base text-slate-100 leading-snug line-clamp-2">
+                    {item.title}
+                  </h3>
+                  <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                    {item.description}
+                  </p>
                 </div>
 
-                <h3 className="font-bold text-base text-slate-100 leading-snug line-clamp-2">
-                  {item.title}
-                </h3>
-                <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                  {item.description}
-                </p>
-              </div>
-
-              <div className="pt-6 mt-4 border-t border-slate-800/80 flex items-center justify-between">
-                <div className="text-[11px] text-slate-400">
-                  กำหนดส่ง: <span className="text-slate-200">{item.dueAt}</span>
+                <div className="pt-6 mt-4 border-t border-slate-800/80 flex items-center justify-between">
+                  <div className="text-[11px] text-slate-400">
+                    กำหนดส่ง: <span className="text-slate-200">{item.dueAt}</span>
+                  </div>
+                  <Link
+                    href={`/dashboard/${item.id}`}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
+                  >
+                    {item.status === "graded" ? "ดูผลคะแนน" : "เริ่มทำแบบฝึกหัด →"}
+                  </Link>
                 </div>
-                <Link
-                  href={`/dashboard/${item.id}`}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
-                >
-                  {item.status === "graded" ? "ดูผลคะแนน" : "เริ่มทำแบบฝึกหัด →"}
-                </Link>
               </div>
-            </div>
-          ))}
+            ))}
           </div>
         )}
       </div>

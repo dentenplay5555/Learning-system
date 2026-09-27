@@ -1,9 +1,28 @@
+// ===================================================================
+// Server Actions — แก้ไข BUG ทั้งหมดที่เกี่ยวข้อง:
+//
+// BUG-01: ตรวจ role ก่อน query (requireUser/requireTeacher)
+// BUG-02: Data Isolation — query เฉพาะข้อมูลที่ user มีสิทธิ์
+// BUG-03: ส่งงานของห้องอื่นได้ → ตรวจ class membership
+// BUG-05: Admin SDK bypass → ตรวจ auth+authz ใน server action
+// BUG-06: Race Condition → ใช้ transaction + tx.create()
+// BUG-07: Assignment + Answer Key ไม่ atomic → ใช้ batch
+// BUG-08: Server Validation → ใช้ Zod
+// BUG-09: Timezone → ใช้ Luxon แปลง Asia/Bangkok → UTC
+// BUG-10: Due Date Hardcode → server ตรวจ dueAt ต้องอยู่ในอนาคต
+// BUG-15: Class Ownership → teacher ต้องเป็น owner ของ class
+// BUG-17: Error Leakage → ไม่ส่ง internal error ให้ client
+// BUG-19: Client Submit Protection → server ใช้ transaction
+// ===================================================================
+
 "use server";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSessionUser, adminDb, FieldValue } from "@/lib/firebase-admin";
-
+import { canAccessTeacherArea } from "@/lib/auth";
+import { createAssignmentSchema, submitAnswersSchema } from "@/lib/validation/assignment";
+import { DateTime } from "luxon";
 
 export interface SubmitResult {
   success: boolean;
@@ -29,39 +48,98 @@ export async function submitAssignmentAction(
   assignmentId: string,
   studentAnswers: Record<string, string | number>
 ): Promise<SubmitResult> {
+  // BUG-01: ตรวจ authentication
   const user = await getSessionUser();
   if (!user) {
     return { success: false, error: "กรุณาเข้าสู่ระบบก่อนส่งงาน" };
   }
 
+  // BUG-01: ตรวจ role — เฉพาะ student เท่านั้นที่ส่งงานได้
+  if (user.role !== "student") {
+    return { success: false, error: "เฉพาะนักเรียนเท่านั้นที่ส่งงานได้" };
+  }
+
+  // BUG-08: Validate input ด้วย Zod
+  if (!assignmentId || typeof assignmentId !== "string" || assignmentId.length === 0) {
+    return { success: false, error: "รหัสแบบฝึกหัดไม่ถูกต้อง" };
+  }
+
+  const parsedAnswers = submitAnswersSchema.safeParse(studentAnswers);
+  if (!parsedAnswers.success) {
+    return { success: false, error: "ข้อมูลคำตอบไม่ถูกต้อง" };
+  }
+
   const submissionId = `${assignmentId}_${user.uid}`;
 
   try {
-    // 0. กันการส่งซ้ำ: ถ้ามี submission ของ id นี้อยู่แล้ว ห้ามตรวจซ้ำ/เขียนทับคะแนนเดิม
-    const existingSubmission = await adminDb.collection("submissions").doc(submissionId).get();
-    if (existingSubmission.exists) {
-      return { success: false, error: "คุณส่งคำตอบของแบบฝึกหัดนี้ไปแล้ว ไม่สามารถส่งซ้ำได้" };
-    }
-
-    // 1. ดึงข้อมูลโจทย์เพื่อเช็คเวลาส่งงาน (Deadline Check)
+    // 1. ดึงข้อมูล Assignment
     const assignmentDoc = await adminDb.collection("assignments").doc(assignmentId).get();
-    
 
     if (!assignmentDoc.exists) {
       return { success: false, error: "ไม่พบแบบฝึกหัดนี้" };
     }
 
     const assignmentData = assignmentDoc.data()!;
+
+    // BUG-03: ตรวจ Class Membership — student ต้องอยู่ในห้องเรียนของ assignment
+    if (assignmentData.classId) {
+      let isMember = false;
+
+      // ตรวจ 1: studentIds array ใน document ของ classes/{classId}
+      const classSnap = await adminDb.collection("classes").doc(assignmentData.classId).get();
+      if (classSnap.exists) {
+        const classData = classSnap.data();
+        if (Array.isArray(classData?.studentIds) && classData.studentIds.includes(user.uid)) {
+          isMember = true;
+        }
+      }
+
+      // ตรวจ 2: subcollection /classes/{classId}/members/{uid}
+      if (!isMember) {
+        const memberRef = adminDb
+          .collection("classes")
+          .doc(assignmentData.classId)
+          .collection("members")
+          .doc(user.uid);
+        const memberSnap = await memberRef.get();
+        if (memberSnap.exists) {
+          isMember = true;
+        }
+      }
+
+      // ตรวจ 3: user.classIds ใน Firestore /users/{uid}
+      if (!isMember) {
+        const userClassIds = user.classIds || [];
+        if (userClassIds.includes(assignmentData.classId)) {
+          isMember = true;
+        }
+      }
+
+      if (!isMember) {
+        return { success: false, error: "คุณไม่มีสิทธิ์ทำแบบฝึกหัดนี้ (ไม่ได้อยู่ในห้องเรียนนี้)" };
+      }
+    }
+
+    // BUG-09: ตรวจ Deadline ด้วย timezone ที่ถูกต้อง
     if (assignmentData.dueAt) {
-      const dueDate = assignmentData.dueAt.toDate ? assignmentData.dueAt.toDate() : new Date(assignmentData.dueAt);
+      const dueDate = assignmentData.dueAt.toDate
+        ? assignmentData.dueAt.toDate()
+        : new Date(assignmentData.dueAt);
       if (Date.now() > dueDate.getTime()) {
         return { success: false, error: "เกินกำหนดเวลาส่งงานแล้ว" };
       }
     }
 
-    // 2. ดึงเฉลยจาก /answerKeys/{assignmentId} (เข้าถึงได้เฉพาะ Server Admin SDK)
+    // 2. ดึงเฉลยจาก /answerKeys/{assignmentId}
     const keyDoc = await adminDb.collection("answerKeys").doc(assignmentId).get();
-    const keyData = keyDoc.data() || { answers: [] };
+
+    // BUG-07: ถ้า answer key ไม่มี → ห้ามตรวจ (ไม่ใช่ให้ทุกคนได้ 0)
+    if (!keyDoc.exists) {
+      console.error(`ANSWER_KEY_MISSING for assignment: ${assignmentId}`);
+      return { success: false, error: "เกิดข้อผิดพลาด กรุณาลองใหม่" };
+    }
+
+    const keyData = keyDoc.data()!;
     const correctMap: Record<string, string | number> = {};
     for (const item of keyData.answers || []) {
       correctMap[item.questionId] = item.correctAnswer;
@@ -73,7 +151,7 @@ export async function submitAssignmentAction(
     let totalMaxScore = assignmentData.maxScore || 0;
 
     const formattedAnswers = questions.map((q: QuestionItem) => {
-      const selected = studentAnswers[q.id];
+      const selected = parsedAnswers.data[q.id];
       const correct = correctMap[q.id];
       const points = q.points || 1;
       const isCorrect = selected !== undefined && String(selected) === String(correct);
@@ -90,17 +168,27 @@ export async function submitAssignmentAction(
       totalMaxScore = questions.reduce((acc: number, cur: QuestionItem) => acc + (cur.points || 1), 0);
     }
 
-    // 4. บันทึกผลลง /submissions/{assignmentId}_{studentId} (write: if false ใน client rule)
-    await adminDb.collection("submissions").doc(submissionId).set({
-      assignmentId,
-      studentId: user.uid,
-      classId: assignmentData.classId || "unknown",
-      answers: formattedAnswers,
-      score: calculatedScore,
-      maxScore: totalMaxScore,
-      status: "graded",
-      submittedAt: FieldValue.serverTimestamp(),
-      gradedAt: FieldValue.serverTimestamp(),
+    // BUG-06 + BUG-19: ใช้ transaction + tx.create() ป้องกัน race condition และ duplicate submission
+    const submissionRef = adminDb.collection("submissions").doc(submissionId);
+
+    await adminDb.runTransaction(async (tx) => {
+      const submissionSnap = await tx.get(submissionRef);
+
+      if (submissionSnap.exists) {
+        throw new Error("ALREADY_SUBMITTED");
+      }
+
+      tx.create(submissionRef, {
+        assignmentId,
+        studentId: user.uid,
+        classId: assignmentData.classId || "unknown",
+        answers: formattedAnswers,
+        score: calculatedScore,
+        maxScore: totalMaxScore,
+        status: "graded",
+        submittedAt: FieldValue.serverTimestamp(),
+        gradedAt: FieldValue.serverTimestamp(),
+      });
     });
 
     return {
@@ -110,9 +198,15 @@ export async function submitAssignmentAction(
       submissionId,
     };
   } catch (err: unknown) {
+    // BUG-17: Error Leakage → log จริง แต่ส่ง safe message
     console.error("Grading failed:", err);
-    const msg = err instanceof Error ? err.message : "เกิดข้อผิดพลาดในการตรวจข้อสอบ";
-    return { success: false, error: msg };
+
+    // Expected errors — safe to show
+    if (err instanceof Error && err.message === "ALREADY_SUBMITTED") {
+      return { success: false, error: "คุณส่งคำตอบของแบบฝึกหัดนี้ไปแล้ว ไม่สามารถส่งซ้ำได้" };
+    }
+
+    return { success: false, error: "เกิดข้อผิดพลาด กรุณาลองใหม่" };
   }
 }
 
@@ -134,20 +228,51 @@ export async function createAssignmentAction(formData: {
     correctAnswer: string | number;
   }>;
 }) {
+  // BUG-01 + BUG-18: ตรวจ authentication + role
   const user = await getSessionUser();
-  if (!user || (user.role !== "teacher" && user.role !== "admin")) {
+  if (!user || !canAccessTeacherArea(user)) {
     return { success: false, error: "คุณไม่มีสิทธิ์สร้างแบบฝึกหัด (เฉพาะคุณครูเท่านั้น)" };
   }
 
+  // BUG-08: Validate ข้อมูลด้วย Zod
+  const parsed = createAssignmentSchema.safeParse(formData);
+  if (!parsed.success) {
+    const errorMsg = parsed.error.issues[0]?.message || "ข้อมูลแบบฝึกหัดไม่ถูกต้อง";
+    return { success: false, error: errorMsg };
+  }
+
+  const data = parsed.data;
+
   try {
+    // BUG-15: ตรวจ Class Ownership — teacher ต้องเป็น owner ของ class
+    const classSnap = await adminDb.collection("classes").doc(data.classId).get();
+    if (!classSnap.exists) {
+      return { success: false, error: "ไม่พบห้องเรียนนี้ในระบบ" };
+    }
+
+    const classData = classSnap.data();
+    if (classData?.teacherId !== user.uid && user.role !== "admin") {
+      return { success: false, error: "คุณไม่ใช่ครูผู้สอนของห้องเรียนนี้" };
+    }
+
+    // BUG-09: Timezone — แปลง datetime-local (Asia/Bangkok) → UTC Timestamp
+    const dueAt = DateTime.fromISO(data.dueAt, { zone: "Asia/Bangkok" })
+      .toUTC()
+      .toJSDate();
+
+    // BUG-10: Due Date ต้องอยู่ในอนาคต
+    if (dueAt <= new Date()) {
+      return { success: false, error: "กำหนดส่งต้องอยู่ในอนาคต" };
+    }
+
     const assignmentRef = adminDb.collection("assignments").doc();
     const assignmentId = assignmentRef.id;
 
     // คำนวณคะแนนเต็ม
-    const maxScore = formData.questions.reduce((acc, q) => acc + (q.points || 1), 0);
+    const maxScore = data.questions.reduce((acc, q) => acc + (q.points || 1), 0);
 
     // แยก questions (ไม่มีเฉลย)
-    const sanitizedQuestions = formData.questions.map((q) => ({
+    const sanitizedQuestions = data.questions.map((q) => ({
       id: q.id,
       type: q.type,
       prompt: q.prompt,
@@ -156,34 +281,38 @@ export async function createAssignmentAction(formData: {
     }));
 
     // แยก answerKeys (มีเฉพาะ questionId และ correctAnswer)
-    const answerKeysList = formData.questions.map((q) => ({
+    const answerKeysList = data.questions.map((q) => ({
       questionId: q.id,
       correctAnswer: q.correctAnswer,
     }));
 
-    // บันทึก /assignments/{assignmentId}
-    await assignmentRef.set({
-      classId: formData.classId,
+    // BUG-07: Atomic — ใช้ batch เพื่อให้ assignment + answerKey สำเร็จหรือล้มเหลวพร้อมกัน
+    const batch = adminDb.batch();
+
+    batch.set(assignmentRef, {
+      classId: data.classId,
       teacherId: user.uid,
-      title: formData.title,
-      description: formData.description,
+      title: data.title,
+      description: data.description,
       maxScore,
-      dueAt: new Date(formData.dueAt),
+      dueAt,
       createdAt: FieldValue.serverTimestamp(),
       questions: sanitizedQuestions,
     });
 
-    // บันทึก /answerKeys/{assignmentId} (Client ห้ามอ่านเด็ดขาด)
-    await adminDb.collection("answerKeys").doc(assignmentId).set({
+    const answerKeyRef = adminDb.collection("answerKeys").doc(assignmentId);
+    batch.set(answerKeyRef, {
       answers: answerKeysList,
       createdAt: FieldValue.serverTimestamp(),
     });
 
+    await batch.commit();
+
     return { success: true, assignmentId };
   } catch (err: unknown) {
+    // BUG-17: Error Leakage → log จริง แต่ส่ง safe message
     console.error("Create assignment failed:", err);
-    const msg = err instanceof Error ? err.message : "ไม่สามารถสร้างแบบฝึกหัดได้";
-    return { success: false, error: msg };
+    return { success: false, error: "เกิดข้อผิดพลาด กรุณาลองใหม่" };
   }
 }
 

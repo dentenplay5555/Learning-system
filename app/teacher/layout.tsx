@@ -1,29 +1,16 @@
-import { redirect } from "next/navigation";
-import { getSessionUser } from "@/lib/firebase-admin";
+import { requireTeacher } from "@/lib/auth";
 
 /**
  * Layout นี้ครอบทุกหน้าใน /teacher/** (รวมถึง /teacher/assignments/new)
- * ทำหน้าที่เช็คสิทธิ์แบบรวมศูนย์ที่เดียว แทนที่จะเช็คซ้ำในทุก page.tsx
- *
- * สำคัญ: เช็คทั้ง "login หรือยัง" และ "role เป็นครู/admin จริงไหม"
- * ห้ามเช็คแค่ isSignedIn แล้วถือว่าปลอดภัย เพราะ role ต้องอ่านจาก
- * server-verified session (getSessionUser) เท่านั้น — ตามกฎ Zero-Trust เดิม
+ * ทำหน้าที่เช็คสิทธิ์แบบรวมศูนย์ที่เดียวผ่าน requireTeacher()
+ * ป้องกันไม่ให้นักเรียนเข้าถึง Teacher Area ได้โดยเด็ดขาด (BUG-01)
  */
- export default async function TeacherLayout({
-     children,
- }: {
-     children: React.ReactNode;
- }) {
-     const user = await getSessionUser();
+export default async function TeacherLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  await requireTeacher();
 
-     if (!user) {
-         redirect("/login");
-     }
-
-     if (user.role !== "teacher" && user.role !== "admin") {
-         // นักเรียนที่พยายามเข้าโซนครู ส่งกลับไปหน้าของตัวเอง ไม่ใช่แค่ปฏิเสธเฉยๆ
-         redirect("/dashboard");
-     }
-
-     return <>{children}</>;
- }
+  return <>{children}</>;
+}

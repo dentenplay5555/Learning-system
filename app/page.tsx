@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getSessionUser } from "@/lib/firebase-admin";
+import { canAccessTeacherArea } from "@/lib/auth";
 
 export default async function HomePage() {
   const user = await getSessionUser();
@@ -28,7 +29,7 @@ export default async function HomePage() {
         {/* CTA Buttons */}
         <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
           {user ? (
-            user.role === "teacher" ? (
+            canAccessTeacherArea(user) ? (
               <Link
                 href="/teacher"
                 className="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-semibold shadow-lg shadow-indigo-600/30 transition-all cursor-pointer"
